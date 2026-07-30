@@ -304,11 +304,24 @@ class ZepCloudBackend:
         batch_created_callback: Callable[[str | None, str], None] | None = None,
         batch_size: int = 350,
         message_progress_callback: Callable[[str, float], None] | None = None,
+        use_batch: bool = False,
     ) -> IngestResult:
-        """Ingest via Zep Batch API (create/add/process) with reconciliation."""
+        """Ingest episodes via Batch API (builder) or sequential graph.add (sim)."""
 
         if not graph_id:
             raise ValueError("graph_id is required")
+
+        # GraphBuilder passes Batch kwargs / use_batch=True; sim updater does not.
+        use_batch_api = use_batch or (
+            operation_id is not None
+            or batch_created_callback is not None
+            or message_progress_callback is not None
+        )
+        if not use_batch_api:
+            return self._add_episodes_sequential(
+                graph_id, items, progress_callback=progress_callback
+            )
+
         contents = [item.content for item in items]
         self.validate_batch_chunks(contents, batch_size=batch_size)
 
@@ -458,6 +471,41 @@ class ZepCloudBackend:
             batch_id=batch_id,
             operation_id=operation_id,
         )
+
+    def _add_episodes_sequential(
+        self,
+        graph_id: str,
+        items: list[EpisodeItem],
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> IngestResult:
+        """Add small/sim episodes via client.graph.add (created_at + metadata)."""
+        episode_uuids: list[str] = []
+        total = len(items)
+        for index, item in enumerate(items, start=1):
+            created_at = item.created_at
+            if created_at is None and item.reference_time is not None:
+                created_at = item.reference_time.isoformat()
+            kwargs: dict[str, Any] = {
+                "graph_id": graph_id,
+                "type": "text",
+                "data": item.content,
+                "source_description": item.source_description or "mirofish",
+            }
+            if created_at:
+                kwargs["created_at"] = created_at
+            if item.metadata:
+                kwargs["metadata"] = item.metadata
+            episode = self.client.graph.add(**kwargs)
+            episode_uuid = (
+                getattr(episode, "uuid_", None) or getattr(episode, "uuid", None)
+            )
+            if not episode_uuid:
+                raise RuntimeError("Zep graph.add returned no episode UUID")
+            episode_uuids.append(str(episode_uuid))
+            if progress_callback is not None:
+                progress_callback(index, total)
+        return IngestResult(episode_uuids=episode_uuids, item_count=total)
 
     def wait_for_batch(
         self,

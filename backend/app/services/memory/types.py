@@ -45,6 +45,8 @@ class EpisodeItem:
     name: str | None = None
     reference_time: datetime | None = None
     source_description: str = "mirofish"
+    created_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

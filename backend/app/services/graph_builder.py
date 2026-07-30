@@ -271,7 +271,7 @@ class GraphBuilderService:
                 done / total if total else 1.0,
             )
 
-        # ZepCloudBackend honors Batch kwargs; Fake/Graphiti ignore via **kwargs.
+        # GraphBuilder passes Batch kwargs / use_batch; Fake/Graphiti ignore via **kwargs.
         result = self.backend.add_episodes(
             graph_id,
             items,
@@ -280,6 +280,7 @@ class GraphBuilderService:
             operation_id=operation_id,
             batch_created_callback=batch_created_callback,
             batch_size=batch_size,
+            use_batch=True,
         )
 
         # Non-Zep: synthesize BatchSubmission identity when backend has no batch_id.

@@ -512,66 +512,55 @@ class ZepGraphMemoryUpdater:
                 except (AttributeError, TypeError, ValueError):
                     reference_time = None
 
-                # Prefer protocol ingest. Zep Cloud tests that assign .client with
-                # graph.add keep the legacy write path so metadata/created_at stay intact.
-                client = self.client
-                graph_add = getattr(getattr(client, "graph", None), "add", None)
-                use_legacy_graph_add = (
-                    graph_add is not None
-                    and type(self.backend).__name__ == "ZepCloudBackend"
-                )
-
-                if use_legacy_graph_add:
-                    episode = graph_add(
-                        graph_id=self.graph_id,
-                        type="text",
-                        data=combined_text,
-                        created_at=self._to_rfc3339(payload_activities[-1].timestamp),
-                        source_description="MiroFish simulation activity batch",
-                        metadata={
-                            "source": "mirofish_simulation",
-                            "simulation_id": self.simulation_id,
-                            "platform": platform,
-                            "activity_count": len(payload_activities),
-                            "first_round": min(a.round_num for a in payload_activities),
-                            "last_round": max(a.round_num for a in payload_activities),
-                            "agent_ids": ",".join(
-                                str(value)
-                                for value in sorted({a.agent_id for a in payload_activities})
+                # Always route through backend; ZepCloudBackend uses graph.add
+                # for non-batch sim episodes (created_at/metadata preserved there).
+                result = self.backend.add_episodes(
+                    self.graph_id,
+                    [
+                        EpisodeItem(
+                            content=combined_text,
+                            name=f"sim-{self.simulation_id}-{platform}",
+                            reference_time=reference_time,
+                            source_description="MiroFish simulation activity batch",
+                            created_at=self._to_rfc3339(
+                                payload_activities[-1].timestamp
                             ),
-                            "action_types": ",".join(
-                                value
-                                for value in sorted({a.action_type for a in payload_activities})
-                                if value
-                            ) or "unknown",
-                        },
-                    )
-                    episode_uuid = (
-                        getattr(episode, "uuid_", None)
-                        or getattr(episode, "uuid", None)
-                    )
-                    if not episode_uuid:
-                        raise RuntimeError("Zep graph.add returned no episode UUID")
-                    self._pending_episode_uuids.append(str(episode_uuid))
-                else:
-                    result = self.backend.add_episodes(
-                        self.graph_id,
-                        [
-                            EpisodeItem(
-                                content=combined_text,
-                                name=f"sim-{self.simulation_id}-{platform}",
-                                reference_time=reference_time,
-                                source_description="MiroFish simulation activity batch",
-                            )
-                        ],
-                    )
-                    self._pending_episode_uuids.extend(
-                        str(u) for u in result.episode_uuids if u
-                    )
-                    if result.batch_id:
-                        self._pending_batches.append(
-                            (result.batch_id, result.item_count)
+                            metadata={
+                                "source": "mirofish_simulation",
+                                "simulation_id": self.simulation_id,
+                                "platform": platform,
+                                "activity_count": len(payload_activities),
+                                "first_round": min(
+                                    a.round_num for a in payload_activities
+                                ),
+                                "last_round": max(
+                                    a.round_num for a in payload_activities
+                                ),
+                                "agent_ids": ",".join(
+                                    str(value)
+                                    for value in sorted(
+                                        {a.agent_id for a in payload_activities}
+                                    )
+                                ),
+                                "action_types": ",".join(
+                                    value
+                                    for value in sorted(
+                                        {a.action_type for a in payload_activities}
+                                    )
+                                    if value
+                                )
+                                or "unknown",
+                            },
                         )
+                    ],
+                )
+                self._pending_episode_uuids.extend(
+                    str(u) for u in result.episode_uuids if u
+                )
+                if result.batch_id:
+                    self._pending_batches.append(
+                        (result.batch_id, result.item_count)
+                    )
 
                 self._total_sent += 1
                 self._total_items_sent += len(payload_activities)

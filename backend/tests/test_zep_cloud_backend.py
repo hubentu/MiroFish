@@ -53,6 +53,7 @@ def test_add_episodes_uses_batch_api_and_returns_ingest_result():
                     reference_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 )
             ],
+            use_batch=True,
         )
     assert result.item_count == 1
     assert result.episode_uuids == ["ep-z1"]
@@ -65,6 +66,40 @@ def test_add_episodes_uses_batch_api_and_returns_ingest_result():
     assert items[0].graph_id == "mirofish_z1"
     assert items[0].data == "Bob likes tea."
     assert items[0].type == "graph_episode"
+
+
+def test_add_episodes_without_batch_kwargs_uses_graph_add():
+    client = MagicMock()
+    client.graph.add.return_value = MagicMock(uuid_="ep-sim-1")
+    with patch("app.services.memory.zep_cloud_backend.get_zep_client", return_value=client):
+        backend = ZepCloudBackend(api_key="test-key")
+        result = backend.add_episodes(
+            "mirofish_z1",
+            [
+                EpisodeItem(
+                    content="Carol posted.",
+                    source_description="MiroFish simulation activity batch",
+                    created_at="2026-07-22T12:00:00+08:00",
+                    metadata={
+                        "source": "mirofish_simulation",
+                        "simulation_id": "sim-1",
+                        "platform": "twitter",
+                        "activity_count": 1,
+                    },
+                )
+            ],
+        )
+    assert result.episode_uuids == ["ep-sim-1"]
+    assert result.batch_id is None
+    assert result.item_count == 1
+    client.graph.add.assert_called_once()
+    client.batch.create.assert_not_called()
+    kwargs = client.graph.add.call_args.kwargs
+    assert kwargs["graph_id"] == "mirofish_z1"
+    assert kwargs["data"] == "Carol posted."
+    assert kwargs["created_at"] == "2026-07-22T12:00:00+08:00"
+    assert kwargs["metadata"]["simulation_id"] == "sim-1"
+    assert kwargs["source_description"] == "MiroFish simulation activity batch"
 
 
 def test_graph_exists_true_when_get_succeeds():
