@@ -2,18 +2,24 @@
 
 Wraps existing zep-cloud SDK helpers behind KnowledgeGraphBackend.
 Cloud-only: get_zep_client rejects ZEP_API_URL.
+
+Document ingest uses Zep Batch API (create/add/process) with reconciliation;
+wait_for_batch remains available for progress polling and resume.
 """
 
 from __future__ import annotations
 
+import hashlib
+import time
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Optional
 
 from pydantic import Field
-from zep_cloud import EntityEdgeSourceTarget, NotFoundError
+from zep_cloud import BatchAddItem, EntityEdgeSourceTarget, NotFoundError
 from zep_cloud.external_clients.ontology import EdgeModel, EntityModel, EntityText
 
+from ...utils.locale import t
 from ...utils.ontology import (
     MAX_ONTOLOGY_TYPES,
     RESERVED_ONTOLOGY_ATTRIBUTE_NAMES,
@@ -21,8 +27,10 @@ from ...utils.ontology import (
     normalize_ontology_source_targets,
 )
 from ...utils.zep import (
+    ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
     get_zep_client,
+    is_retryable_zep_error,
     normalize_zep_search_limit,
     normalize_zep_search_query,
 )
@@ -41,14 +49,6 @@ def _dt_str(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
-
-
-def _to_rfc3339(value: datetime | None) -> str:
-    if value is None:
-        return datetime.now(timezone.utc).isoformat()
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.isoformat()
 
 
 def _node_from_zep(node: Any, *, group_id: str = "") -> GraphNode:
@@ -180,33 +180,370 @@ class ZepCloudBackend:
                 edges=edge_definitions if edge_definitions else None,
             )
 
+    @staticmethod
+    def build_operation_id(graph_id: str, contents: list[str]) -> str:
+        payload_hash = hashlib.sha256("\0".join(contents).encode("utf-8")).hexdigest()
+        return hashlib.sha256(
+            f"{graph_id}:{payload_hash}".encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def validate_batch_chunks(chunks: list[str], *, batch_size: int = 350) -> None:
+        if not chunks:
+            raise ValueError("At least one text chunk is required")
+        if not 1 <= batch_size <= 350:
+            raise ValueError("batch_size must be between 1 and 350")
+        if len(chunks) > 50_000:
+            raise ValueError("A Zep batch cannot contain more than 50,000 items")
+        oversized = [index for index, chunk in enumerate(chunks) if len(chunk) > 10_000]
+        if oversized:
+            raise ValueError(
+                f"Zep batch item exceeds 10,000 characters at chunk {oversized[0]}"
+            )
+
+    def _find_batch_by_operation_id(
+        self,
+        graph_id: str,
+        operation_id: str,
+        *,
+        max_attempts: int = 3,
+    ) -> Any | None:
+        for attempt in range(1, max_attempts + 1):
+            matches: list[Any] = []
+            cursor: int | None = None
+            seen_cursors: set[int] = set()
+            while True:
+                page = call_zep_read_with_retry(
+                    lambda: self.client.batch.list(limit=100, cursor=cursor),
+                    operation_name=f"reconcile batch create {operation_id}",
+                )
+                for batch in getattr(page, "batches", None) or []:
+                    metadata = getattr(batch, "metadata", None) or {}
+                    if (
+                        metadata.get("mirofish_operation_id") == operation_id
+                        and metadata.get("graph_id") == graph_id
+                    ):
+                        matches.append(batch)
+                next_cursor = getattr(page, "next_cursor", None)
+                if next_cursor is None:
+                    break
+                if next_cursor == cursor or next_cursor in seen_cursors:
+                    raise RuntimeError("Zep batch list cursor did not advance")
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
+
+            if len(matches) > 1:
+                raise RuntimeError(
+                    f"Multiple Zep batches match operation {operation_id}; refusing ambiguity"
+                )
+            if matches:
+                return matches[0]
+            if attempt < max_attempts:
+                time.sleep(attempt)
+        return None
+
+    def _list_batch_items(self, batch_id: str) -> list[Any]:
+        items: list[Any] = []
+        cursor: int | None = None
+        seen_cursors: set[int] = set()
+        while True:
+            page = call_zep_read_with_retry(
+                lambda: self.client.batch.list_items(
+                    batch_id=batch_id,
+                    limit=100,
+                    cursor=cursor,
+                ),
+                operation_name=f"list batch items {batch_id}",
+            )
+            items.extend(getattr(page, "items", None) or [])
+            next_cursor = getattr(page, "next_cursor", None)
+            if next_cursor is None:
+                break
+            if next_cursor == cursor or next_cursor in seen_cursors:
+                raise RuntimeError(f"Zep batch {batch_id} item cursor did not advance")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        return items
+
+    def _reconcile_batch_item_count(
+        self,
+        batch_id: str,
+        expected_item_count: int,
+        *,
+        max_attempts: int = 3,
+    ) -> list[Any]:
+        items: list[Any] = []
+        for attempt in range(1, max_attempts + 1):
+            items = self._list_batch_items(batch_id)
+            if len(items) >= expected_item_count:
+                return items
+            if attempt < max_attempts:
+                time.sleep(attempt)
+        return items
+
+    def get_batch_summary(self, batch_id: str) -> Any:
+        return call_zep_read_with_retry(
+            lambda: self.client.batch.get(batch_id=batch_id),
+            operation_name=f"get batch {batch_id}",
+        )
+
     def add_episodes(
         self,
         graph_id: str,
         items: list[EpisodeItem],
         *,
         progress_callback: Callable[[int, int], None] | None = None,
+        operation_id: str | None = None,
+        batch_created_callback: Callable[[str | None, str], None] | None = None,
+        batch_size: int = 350,
+        message_progress_callback: Callable[[str, float], None] | None = None,
     ) -> IngestResult:
-        # ponytail: sequential graph.add for protocol completeness; Batch API
-        # reconciliation stays in GraphBuilderService until Task 6 extraction.
-        episode_uuids: list[str] = []
-        total = len(items)
-        for index, item in enumerate(items, start=1):
-            episode = self.client.graph.add(
-                graph_id=graph_id,
-                type="text",
-                data=item.content,
-                created_at=_to_rfc3339(item.reference_time),
-                source_description=item.source_description or "mirofish",
+        """Ingest via Zep Batch API (create/add/process) with reconciliation."""
+
+        if not graph_id:
+            raise ValueError("graph_id is required")
+        contents = [item.content for item in items]
+        self.validate_batch_chunks(contents, batch_size=batch_size)
+
+        total_chunks = len(contents)
+        operation_id = operation_id or self.build_operation_id(graph_id, contents)
+        if batch_created_callback:
+            batch_created_callback(None, operation_id)
+
+        try:
+            batch = self.client.batch.create(
                 metadata={
-                    "source": "mirofish",
-                    "episode_name": item.name or f"episode_{index}",
-                },
+                    "mirofish_operation_id": operation_id,
+                    "graph_id": graph_id,
+                    "chunk_count": total_chunks,
+                }
             )
-            episode_uuids.append(_zep_uuid(episode))
+        except Exception as error:
+            if not is_retryable_zep_error(error):
+                raise
+            batch = self._find_batch_by_operation_id(graph_id, operation_id)
+            if batch is None:
+                raise RuntimeError(
+                    "Zep batch creation is unconfirmed and no matching operation was found"
+                ) from error
+        batch_id = getattr(batch, "batch_id", None)
+        if not batch_id:
+            raise RuntimeError("Zep Batch API returned no batch_id")
+        if batch_created_callback:
+            batch_created_callback(batch_id, operation_id)
+
+        episode_uuids: list[str] = []
+        for i in range(0, total_chunks, batch_size):
+            batch_chunks = contents[i : i + batch_size]
+            batch_num = i // batch_size + 1
+            total_batches = (total_chunks + batch_size - 1) // batch_size
+            done = i + len(batch_chunks)
+
+            if message_progress_callback:
+                message_progress_callback(
+                    t(
+                        "progress.sendingBatch",
+                        current=batch_num,
+                        total=total_batches,
+                        chunks=len(batch_chunks),
+                    ),
+                    done / total_chunks,
+                )
             if progress_callback is not None:
-                progress_callback(index, total)
-        return IngestResult(episode_uuids=episode_uuids, item_count=len(items))
+                progress_callback(done, total_chunks)
+
+            batch_items = [
+                BatchAddItem(
+                    type="graph_episode",
+                    graph_id=graph_id,
+                    data=chunk,
+                    data_type="text",
+                    source_description=(
+                        items[i + offset].source_description
+                        or "MiroFish source document chunk"
+                    ),
+                    metadata={
+                        "mirofish_operation_id": operation_id,
+                        "chunk_index": i + offset,
+                        "chunk_sha256": hashlib.sha256(
+                            chunk.encode("utf-8")
+                        ).hexdigest(),
+                    },
+                )
+                for offset, chunk in enumerate(batch_chunks)
+            ]
+
+            expected_item_count = i + len(batch_items)
+            try:
+                item_details = self.client.batch.add(
+                    batch_id=batch_id,
+                    items=batch_items,
+                )
+            except Exception as e:
+                if message_progress_callback:
+                    message_progress_callback(
+                        t("progress.batchFailed", batch=batch_num, error=str(e)),
+                        0,
+                    )
+                if is_retryable_zep_error(e):
+                    recovered_items = self._reconcile_batch_item_count(
+                        batch_id,
+                        expected_item_count,
+                    )
+                    recovered_indexes = {
+                        getattr(item, "sequence_index", None)
+                        for item in recovered_items
+                    }
+                    if (
+                        len(recovered_items) == expected_item_count
+                        and recovered_indexes == set(range(expected_item_count))
+                    ):
+                        item_details = recovered_items[i:expected_item_count]
+                    else:
+                        raise RuntimeError(
+                            f"Zep batch {batch_id} item submission is unconfirmed; "
+                            "the draft was not processed or replayed"
+                        ) from e
+                else:
+                    raise RuntimeError(
+                        f"Zep batch {batch_id} item submission failed"
+                    ) from e
+
+            if len(item_details or []) != len(batch_items):
+                recovered_items = self._reconcile_batch_item_count(
+                    batch_id,
+                    expected_item_count,
+                )
+                recovered_indexes = {
+                    getattr(item, "sequence_index", None)
+                    for item in recovered_items
+                }
+                if (
+                    len(recovered_items) == expected_item_count
+                    and recovered_indexes == set(range(expected_item_count))
+                ):
+                    item_details = recovered_items[i:expected_item_count]
+                else:
+                    raise RuntimeError(
+                        f"Zep batch {batch_id} acknowledged {len(item_details or [])} "
+                        f"of {len(batch_items)} items"
+                    )
+            for item in item_details:
+                episode_uuid = getattr(item, "episode_uuid", None)
+                if episode_uuid:
+                    episode_uuids.append(episode_uuid)
+
+        try:
+            self.client.batch.process(batch_id=batch_id)
+        except Exception as error:
+            summary = call_zep_read_with_retry(
+                lambda: self.client.batch.get(batch_id=batch_id),
+                operation_name=f"reconcile batch {batch_id}",
+            )
+            if getattr(summary, "status", None) in {None, "draft"}:
+                raise RuntimeError(
+                    f"Zep batch {batch_id} processing is unconfirmed"
+                ) from error
+
+        return IngestResult(
+            episode_uuids=episode_uuids,
+            item_count=total_chunks,
+            batch_id=batch_id,
+            operation_id=operation_id,
+        )
+
+    def wait_for_batch(
+        self,
+        batch_id: str,
+        item_count: int,
+        *,
+        progress_callback: Callable[[str, float], None] | None = None,
+        timeout: int | None = None,
+    ) -> list[str]:
+        timeout = timeout or ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        start_time = time.time()
+        terminal_states = {"succeeded", "partial", "failed", "invalid", "canceled"}
+        status = None
+
+        while True:
+            if time.time() - start_time > timeout:
+                raise TimeoutError(
+                    f"Zep batch {batch_id} did not finish within {timeout}s"
+                )
+
+            summary = call_zep_read_with_retry(
+                lambda: self.client.batch.get(batch_id=batch_id),
+                operation_name=f"poll batch {batch_id}",
+            )
+            status = getattr(summary, "status", None)
+            progress = getattr(summary, "progress", None)
+            percent = float(getattr(progress, "percent_complete", 0) or 0) / 100
+            if progress_callback:
+                completed = int(getattr(progress, "succeeded_items", 0) or 0)
+                progress_callback(
+                    t(
+                        "progress.zepProcessing",
+                        completed=completed,
+                        total=item_count,
+                        pending=max(item_count - completed, 0),
+                        elapsed=int(time.time() - start_time),
+                    ),
+                    min(max(percent, 0.0), 1.0),
+                )
+
+            if status in terminal_states:
+                break
+            time.sleep(3)
+
+        items = self._list_batch_items(batch_id)
+        if status != "succeeded":
+            failed_items = [
+                item
+                for item in items
+                if getattr(item, "status", None) not in {"succeeded", "skipped"}
+            ]
+            first_error = (
+                getattr(failed_items[0], "error", None) if failed_items else None
+            )
+            raise RuntimeError(
+                f"Zep batch {batch_id} ended as {status}; "
+                f"failed_items={len(failed_items)}; first_error={first_error}"
+            )
+        if len(items) != item_count:
+            raise RuntimeError(
+                f"Zep batch {batch_id} contains {len(items)} items, "
+                f"expected {item_count}"
+            )
+
+        ordered_items = sorted(
+            items,
+            key=lambda item: getattr(item, "sequence_index", 0) or 0,
+        )
+        episode_uuids: list[str] = []
+        for item in ordered_items:
+            item_status = getattr(item, "status", None)
+            episode_uuid = getattr(item, "episode_uuid", None)
+            source_uuid = getattr(item, "source_uuid", None)
+            if item_status != "succeeded" or not episode_uuid:
+                raise RuntimeError(
+                    f"Zep batch {batch_id} returned an incomplete item"
+                )
+            if source_uuid and source_uuid != episode_uuid:
+                raise RuntimeError(
+                    f"Zep batch {batch_id} returned mismatched episode UUIDs"
+                )
+            episode_uuids.append(episode_uuid)
+
+        if progress_callback:
+            progress_callback(
+                t(
+                    "progress.processingComplete",
+                    completed=len(episode_uuids),
+                    total=item_count,
+                ),
+                1.0,
+            )
+        return episode_uuids
 
     def list_nodes(self, graph_id: str) -> list[GraphNode]:
         nodes = fetch_all_nodes(self.client, graph_id)

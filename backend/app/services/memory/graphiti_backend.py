@@ -173,6 +173,7 @@ class GraphitiBackend:
         items: list[EpisodeItem],
         *,
         progress_callback: Callable[[int, int], None] | None = None,
+        **_kwargs: Any,
     ) -> IngestResult:
         from graphiti_core.nodes import EpisodeType
 

@@ -39,6 +39,7 @@ class FakeKnowledgeGraphBackend:
         items: list[EpisodeItem],
         *,
         progress_callback: Callable[[int, int], None] | None = None,
+        **_kwargs: Any,
     ) -> IngestResult:
         graph = self._graphs[graph_id]
         episode_uuids: list[str] = []

@@ -49,3 +49,5 @@ class EpisodeItem:
 class IngestResult:
     episode_uuids: list[str]
     item_count: int
+    batch_id: str | None = None
+    operation_id: str | None = None

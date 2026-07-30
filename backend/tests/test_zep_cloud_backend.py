@@ -35,11 +35,13 @@ def test_search_normalizes_edge_facts():
     assert hits.query == "related"
 
 
-def test_add_episodes_calls_graph_add_and_returns_ingest_result():
+def test_add_episodes_uses_batch_api_and_returns_ingest_result():
+    from types import SimpleNamespace
+
     client = MagicMock()
-    episode = MagicMock()
-    episode.uuid_ = "ep-z1"
-    client.graph.add.return_value = episode
+    client.batch.create.return_value = SimpleNamespace(batch_id="batch-z1")
+    client.batch.add.return_value = [SimpleNamespace(episode_uuid="ep-z1")]
+    client.batch.process.return_value = SimpleNamespace(status="queued")
     with patch("app.services.memory.zep_cloud_backend.get_zep_client", return_value=client):
         backend = ZepCloudBackend(api_key="test-key")
         result = backend.add_episodes(
@@ -54,10 +56,15 @@ def test_add_episodes_calls_graph_add_and_returns_ingest_result():
         )
     assert result.item_count == 1
     assert result.episode_uuids == ["ep-z1"]
-    kwargs = client.graph.add.call_args.kwargs
-    assert kwargs["graph_id"] == "mirofish_z1"
-    assert kwargs["data"] == "Bob likes tea."
-    assert kwargs["type"] == "text"
+    assert result.batch_id == "batch-z1"
+    assert result.operation_id
+    client.batch.create.assert_called_once()
+    client.batch.add.assert_called_once()
+    client.batch.process.assert_called_once_with(batch_id="batch-z1")
+    items = client.batch.add.call_args.kwargs["items"]
+    assert items[0].graph_id == "mirofish_z1"
+    assert items[0].data == "Bob likes tea."
+    assert items[0].type == "graph_episode"
 
 
 def test_graph_exists_true_when_get_succeeds():
