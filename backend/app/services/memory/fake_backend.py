@@ -5,6 +5,14 @@ from typing import Any, Callable
 from .types import EpisodeItem, GraphEdge, GraphNode, IngestResult, SearchHits
 
 
+def _dt_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def _first_capitalized_token(content: str) -> str:
     match = re.search(r"\b([A-Z][a-zA-Z0-9]*)\b", content)
     return match.group(1) if match else "Entity"
@@ -58,6 +66,7 @@ class FakeKnowledgeGraphBackend:
                 labels=["Entity"],
                 summary=item.content,
                 group_id=graph_id,
+                created_at=_dt_str(item.reference_time),
             )
 
             edge_uuid = str(uuid.uuid4())
@@ -68,6 +77,7 @@ class FakeKnowledgeGraphBackend:
                 source_node_uuid=node_uuid,
                 target_node_uuid=node_uuid,
                 group_id=graph_id,
+                episodes=[episode_uuid],
             )
 
             if progress_callback is not None:

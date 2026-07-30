@@ -11,6 +11,7 @@ class GraphNode:
     summary: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
     group_id: str = ""
+    created_at: str | None = None
 
 
 @dataclass
@@ -26,6 +27,7 @@ class GraphEdge:
     expired_at: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     group_id: str = ""
+    episodes: list[str] = field(default_factory=list)
 
 
 @dataclass

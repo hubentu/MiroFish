@@ -276,6 +276,7 @@ class GraphBuilderService:
             graph_id,
             items,
             progress_callback=_progress if progress_callback else None,
+            message_progress_callback=progress_callback,
             operation_id=operation_id,
             batch_created_callback=batch_created_callback,
             batch_size=batch_size,
@@ -432,7 +433,9 @@ class GraphBuilderService:
 
         nodes_data = []
         for node in nodes:
-            created_at = node.attributes.get("created_at") if node.attributes else None
+            created_at = node.created_at
+            if not created_at and node.attributes:
+                created_at = node.attributes.get("created_at")
             nodes_data.append({
                 "uuid": node.uuid,
                 "name": node.name,
@@ -459,7 +462,7 @@ class GraphBuilderService:
                 "valid_at": edge.valid_at,
                 "invalid_at": edge.invalid_at,
                 "expired_at": edge.expired_at,
-                "episodes": [],
+                "episodes": list(edge.episodes),
             })
 
         return {

@@ -111,6 +111,76 @@ def test_list_nodes_maps_zep_nodes():
     assert nodes[0].group_id == "mirofish_z1"
 
 
+def test_list_nodes_maps_created_at():
+    from datetime import datetime, timezone
+
+    client = MagicMock()
+    created = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    node = MagicMock(
+        uuid_="n1",
+        labels=["Person"],
+        summary="likes tea",
+        attributes={"role": "chef"},
+        created_at=created,
+    )
+    node.name = "Bob"
+    with (
+        patch("app.services.memory.zep_cloud_backend.get_zep_client", return_value=client),
+        patch(
+            "app.services.memory.zep_cloud_backend.fetch_all_nodes",
+            return_value=[node],
+        ),
+    ):
+        backend = ZepCloudBackend(api_key="test-key")
+        nodes = backend.list_nodes("mirofish_z1")
+    assert nodes[0].created_at == created.isoformat()
+
+
+def test_list_edges_maps_episodes():
+    client = MagicMock()
+    edge = MagicMock(
+        uuid_="e1",
+        name="REL",
+        fact="A related to B",
+        source_node_uuid="a",
+        target_node_uuid="b",
+        episodes=["ep-1", "ep-2"],
+    )
+    with (
+        patch("app.services.memory.zep_cloud_backend.get_zep_client", return_value=client),
+        patch(
+            "app.services.memory.zep_cloud_backend.fetch_all_edges",
+            return_value=[edge],
+        ),
+    ):
+        backend = ZepCloudBackend(api_key="test-key")
+        edges = backend.list_edges("mirofish_z1")
+    assert edges[0].episodes == ["ep-1", "ep-2"]
+
+
+def test_list_edges_maps_episode_ids_fallback():
+    client = MagicMock()
+    edge = MagicMock(
+        uuid_="e1",
+        name="REL",
+        fact="A related to B",
+        source_node_uuid="a",
+        target_node_uuid="b",
+        episodes=None,
+        episode_ids=["ep-x"],
+    )
+    with (
+        patch("app.services.memory.zep_cloud_backend.get_zep_client", return_value=client),
+        patch(
+            "app.services.memory.zep_cloud_backend.fetch_all_edges",
+            return_value=[edge],
+        ),
+    ):
+        backend = ZepCloudBackend(api_key="test-key")
+        edges = backend.list_edges("mirofish_z1")
+    assert edges[0].episodes == ["ep-x"]
+
+
 def test_get_node_returns_none_when_missing():
     client = MagicMock()
     client.graph.node.get.side_effect = NotFoundError(body="missing")

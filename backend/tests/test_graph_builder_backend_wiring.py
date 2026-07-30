@@ -42,3 +42,22 @@ def test_delete_and_get_graph_data_delegate():
     assert data["edge_count"] >= 1
     svc.delete_graph("mirofish_wire1")
     assert not fake.graph_exists("mirofish_wire1")
+
+
+def test_get_graph_data_preserves_episodes_and_created_at():
+    from datetime import datetime, timezone
+
+    fake = FakeKnowledgeGraphBackend()
+    svc = GraphBuilderService(backend=fake)
+    svc.create_graph("wired", graph_id="mirofish_wire1")
+    episode_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    from app.services.memory.types import EpisodeItem
+
+    fake.add_episodes(
+        "mirofish_wire1",
+        [EpisodeItem(content="Acme hired Bob.", reference_time=episode_time)],
+    )
+    data = svc.get_graph_data("mirofish_wire1")
+    assert data["nodes"][0]["created_at"] == episode_time.isoformat()
+    assert len(data["edges"][0]["episodes"]) == 1
+    assert data["edges"][0]["episodes"][0]

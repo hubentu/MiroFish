@@ -51,6 +51,11 @@ def _dt_str(value: Any) -> str | None:
     return str(value)
 
 
+def _episodes_from_zep(edge: Any) -> list[str]:
+    raw = getattr(edge, "episodes", None) or getattr(edge, "episode_ids", None) or []
+    return [str(item) for item in raw]
+
+
 def _node_from_zep(node: Any, *, group_id: str = "") -> GraphNode:
     labels = list(getattr(node, "labels", None) or [])
     attrs = getattr(node, "attributes", None) or {}
@@ -63,6 +68,7 @@ def _node_from_zep(node: Any, *, group_id: str = "") -> GraphNode:
         summary=str(getattr(node, "summary", "") or ""),
         attributes=dict(attrs),
         group_id=group_id or str(getattr(node, "graph_id", "") or ""),
+        created_at=_dt_str(getattr(node, "created_at", None)),
     )
 
 
@@ -82,6 +88,7 @@ def _edge_from_zep(edge: Any, *, group_id: str = "") -> GraphEdge:
         expired_at=_dt_str(getattr(edge, "expired_at", None)),
         attributes=dict(attrs),
         group_id=group_id,
+        episodes=_episodes_from_zep(edge),
     )
 
 

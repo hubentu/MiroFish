@@ -53,6 +53,7 @@ def _node_from_entity(node: Any) -> GraphNode:
         summary=str(getattr(node, "summary", "") or ""),
         attributes=dict(attrs),
         group_id=str(getattr(node, "group_id", "") or ""),
+        created_at=_dt_str(getattr(node, "created_at", None)),
     )
 
 
