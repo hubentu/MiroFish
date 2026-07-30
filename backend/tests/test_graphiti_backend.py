@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.memory.graphiti_backend import GraphitiBackend
 from app.services.memory.ontology_mapper import map_entity_types
@@ -7,7 +7,9 @@ from app.services.memory.types import EpisodeItem
 
 
 def test_create_graph_registers_group_and_builds_indices():
-    backend = GraphitiBackend(client=MagicMock())
+    client = MagicMock()
+    client.driver = None
+    backend = GraphitiBackend(client=client)
     backend._ensure_indices = MagicMock()
     gid = backend.create_graph("mirofish_abc", "Demo")
     assert gid == "mirofish_abc"
@@ -17,6 +19,7 @@ def test_create_graph_registers_group_and_builds_indices():
 
 def test_add_episodes_calls_add_episode_with_group_id():
     client = MagicMock()
+    client.driver = None
     client.add_episode = AsyncMock(return_value=MagicMock(episode=MagicMock(uuid="ep-1")))
     backend = GraphitiBackend(client=client)
     backend.create_graph("mirofish_abc", "Demo")
@@ -41,14 +44,44 @@ def test_search_maps_edges_to_search_hits():
     edge.source_node_uuid = "n1"
     edge.target_node_uuid = "n2"
     client = MagicMock()
+    client.driver = None
     client.search = AsyncMock(return_value=[edge])
     backend = GraphitiBackend(client=client)
     backend.create_graph("mirofish_abc", "Demo")
     hits = backend.search("mirofish_abc", "tea", limit=5)
+    assert client.search.await_args.kwargs["group_ids"] == ["mirofish_abc"]
     assert hits.facts == ["Bob likes tea"]
     assert hits.edges[0]["uuid"] == "e1"
     assert hits.query == "tea"
     assert hits.total_count == 1
+
+
+def test_get_node_edges_filters_by_group_id():
+    edge_in = MagicMock()
+    edge_in.uuid = "e1"
+    edge_in.name = "LIKES"
+    edge_in.fact = "Bob likes tea"
+    edge_in.source_node_uuid = "n1"
+    edge_in.target_node_uuid = "n2"
+    edge_in.group_id = "mirofish_abc"
+
+    edge_out = MagicMock()
+    edge_out.uuid = "e2"
+    edge_out.group_id = "other_graph"
+
+    client = MagicMock()
+    client.driver = MagicMock()
+
+    with patch(
+        "graphiti_core.edges.EntityEdge.get_by_node_uuid",
+        new=AsyncMock(return_value=[edge_in, edge_out]),
+    ):
+        backend = GraphitiBackend(client=client)
+        edges = backend.get_node_edges("mirofish_abc", "n1")
+
+    assert len(edges) == 1
+    assert edges[0].uuid == "e1"
+    assert edges[0].group_id == "mirofish_abc"
 
 
 def test_map_entity_types_sanitizes_reserved_attributes():

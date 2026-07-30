@@ -237,14 +237,17 @@ class GraphitiBackend:
         return _node_from_entity(node)
 
     def get_node_edges(self, graph_id: str, node_uuid: str) -> list[GraphEdge]:
-        del graph_id  # edges carry group_id; Graphiti helper keys by node uuid
         driver = getattr(self.client, "driver", None)
         if driver is None:
             return []
         from graphiti_core.edges import EntityEdge
 
         edges = run_sync(EntityEdge.get_by_node_uuid(driver, node_uuid))
-        return [_edge_from_entity(e) for e in edges]
+        return [
+            _edge_from_entity(e)
+            for e in edges
+            if str(getattr(e, "group_id", "") or "") == graph_id
+        ]
 
     def search(
         self,
