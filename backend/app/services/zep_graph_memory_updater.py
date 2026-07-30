@@ -16,8 +16,11 @@ from ..utils.locale import get_locale, set_locale
 from ..utils.zep import (
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
     call_zep_read_with_retry,
-    get_zep_client,
 )
+from .memory.factory import get_memory_backend
+from .memory.protocol import KnowledgeGraphBackend
+from .memory.types import EpisodeItem
+from .memory.zep_cloud_backend import ZepCloudBackend
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -245,6 +248,7 @@ class ZepGraphMemoryUpdater:
         graph_id: str,
         api_key: Optional[str] = None,
         simulation_id: Optional[str] = None,
+        backend: KnowledgeGraphBackend | None = None,
     ):
         """
         初始化更新器
@@ -252,19 +256,16 @@ class ZepGraphMemoryUpdater:
         Args:
             graph_id: Zep图谱ID
             api_key: Zep API Key（可选，默认从配置读取）
+            backend: Knowledge graph backend (optional; defaults to factory)
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id or "unknown"
         self.api_key = api_key or Config.ZEP_API_KEY
-        
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY未配置")
-        
-        self.client = get_zep_client(self.api_key)
-        
+        self.backend = backend or get_memory_backend()
+
         # 活动队列
         self._activity_queue: Queue = Queue()
-        
+
         # 按平台分组的活动缓冲区（每个平台各自累积到BATCH_SIZE后批量发送）
         self._platform_buffers: Dict[str, List[AgentActivity]] = {
             'twitter': [],
@@ -272,11 +273,11 @@ class ZepGraphMemoryUpdater:
         }
         self._buffer_lock = threading.Lock()
         self._acceptance_lock = threading.Lock()
-        
+
         # 控制标志
         self._running = False
         self._worker_thread: Optional[threading.Thread] = None
-        
+
         # 统计
         self._total_activities = 0  # 实际添加到队列的活动数
         self._total_sent = 0        # 成功发送到Zep的批次数
@@ -285,8 +286,19 @@ class ZepGraphMemoryUpdater:
         self._skipped_count = 0     # 被过滤跳过的活动数（DO_NOTHING）
         self._failed_batches: List[Dict[str, Any]] = []
         self._pending_episode_uuids: List[str] = []
-        
+        self._pending_batches: List[tuple[str, int]] = []
+
         logger.info(f"ZepGraphMemoryUpdater 初始化完成: graph_id={graph_id}, batch_size={self.BATCH_SIZE}")
+
+    @property
+    def client(self):
+        """Legacy accessor for tests that poke the Zep SDK client."""
+        return getattr(self.backend, "client", None)
+
+    @client.setter
+    def client(self, value) -> None:
+        # ponytail: tests assign .client; wrap as ZepCloudBackend
+        self.backend = ZepCloudBackend(client=value)
     
     def _get_platform_display_name(self, platform: str) -> str:
         """获取平台的显示名称"""
@@ -491,38 +503,76 @@ class ZepGraphMemoryUpdater:
             if deadline is not None and time.time() >= deadline:
                 raise _DrainDeadlineExceeded(processed_count)
             try:
-                episode = self.client.graph.add(
-                    graph_id=self.graph_id,
-                    type="text",
-                    data=combined_text,
-                    created_at=self._to_rfc3339(payload_activities[-1].timestamp),
-                    source_description="MiroFish simulation activity batch",
-                    metadata={
-                        "source": "mirofish_simulation",
-                        "simulation_id": self.simulation_id,
-                        "platform": platform,
-                        "activity_count": len(payload_activities),
-                        "first_round": min(a.round_num for a in payload_activities),
-                        "last_round": max(a.round_num for a in payload_activities),
-                        "agent_ids": ",".join(
-                            str(value)
-                            for value in sorted({a.agent_id for a in payload_activities})
-                        ),
-                        "action_types": ",".join(
-                            value
-                            for value in sorted({a.action_type for a in payload_activities})
-                            if value
-                        ) or "unknown",
-                    },
+                reference_time = None
+                try:
+                    parsed = datetime.fromisoformat(
+                        self._to_rfc3339(payload_activities[-1].timestamp).replace("Z", "+00:00")
+                    )
+                    reference_time = parsed
+                except (AttributeError, TypeError, ValueError):
+                    reference_time = None
+
+                # Prefer protocol ingest. Zep Cloud tests that assign .client with
+                # graph.add keep the legacy write path so metadata/created_at stay intact.
+                client = self.client
+                graph_add = getattr(getattr(client, "graph", None), "add", None)
+                use_legacy_graph_add = (
+                    graph_add is not None
+                    and type(self.backend).__name__ == "ZepCloudBackend"
                 )
 
-                episode_uuid = (
-                    getattr(episode, "uuid_", None)
-                    or getattr(episode, "uuid", None)
-                )
-                if not episode_uuid:
-                    raise RuntimeError("Zep graph.add returned no episode UUID")
-                self._pending_episode_uuids.append(str(episode_uuid))
+                if use_legacy_graph_add:
+                    episode = graph_add(
+                        graph_id=self.graph_id,
+                        type="text",
+                        data=combined_text,
+                        created_at=self._to_rfc3339(payload_activities[-1].timestamp),
+                        source_description="MiroFish simulation activity batch",
+                        metadata={
+                            "source": "mirofish_simulation",
+                            "simulation_id": self.simulation_id,
+                            "platform": platform,
+                            "activity_count": len(payload_activities),
+                            "first_round": min(a.round_num for a in payload_activities),
+                            "last_round": max(a.round_num for a in payload_activities),
+                            "agent_ids": ",".join(
+                                str(value)
+                                for value in sorted({a.agent_id for a in payload_activities})
+                            ),
+                            "action_types": ",".join(
+                                value
+                                for value in sorted({a.action_type for a in payload_activities})
+                                if value
+                            ) or "unknown",
+                        },
+                    )
+                    episode_uuid = (
+                        getattr(episode, "uuid_", None)
+                        or getattr(episode, "uuid", None)
+                    )
+                    if not episode_uuid:
+                        raise RuntimeError("Zep graph.add returned no episode UUID")
+                    self._pending_episode_uuids.append(str(episode_uuid))
+                else:
+                    result = self.backend.add_episodes(
+                        self.graph_id,
+                        [
+                            EpisodeItem(
+                                content=combined_text,
+                                name=f"sim-{self.simulation_id}-{platform}",
+                                reference_time=reference_time,
+                                source_description="MiroFish simulation activity batch",
+                            )
+                        ],
+                    )
+                    self._pending_episode_uuids.extend(
+                        str(u) for u in result.episode_uuids if u
+                    )
+                    if result.batch_id:
+                        self._pending_batches.append(
+                            (result.batch_id, result.item_count)
+                        )
+
                 self._total_sent += 1
                 self._total_items_sent += len(payload_activities)
                 display_name = self._get_platform_display_name(platform)
@@ -597,8 +647,28 @@ class ZepGraphMemoryUpdater:
                     del self._platform_buffers[platform][:processed_count]
 
     def _wait_for_pending_episodes(self, *, deadline: float | None = None) -> None:
+        if self._pending_batches:
+            waiter = getattr(self.backend, "wait_for_batch", None)
+            if waiter is not None:
+                if deadline is None:
+                    remaining = ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+                else:
+                    remaining = max(0.0, deadline - time.time())
+                for batch_id, item_count in self._pending_batches:
+                    waiter(batch_id, item_count, timeout=int(remaining) or 1)
+            self._pending_batches = []
+            self._pending_episode_uuids = []
+            return
+
         pending = set(self._pending_episode_uuids)
         if not pending:
+            return
+
+        # Graphiti/Fake complete extraction inside add_episodes — nothing to poll.
+        client = self.client
+        episode_api = getattr(getattr(client, "graph", None), "episode", None)
+        if episode_api is None or not hasattr(episode_api, "get"):
+            self._pending_episode_uuids = []
             return
 
         if deadline is None:
@@ -611,7 +681,7 @@ class ZepGraphMemoryUpdater:
                 )
             for episode_uuid in list(pending):
                 episode = call_zep_read_with_retry(
-                    lambda: self.client.graph.episode.get(uuid_=episode_uuid),
+                    lambda: client.graph.episode.get(uuid_=episode_uuid),
                     operation_name=f"poll simulation episode {episode_uuid}",
                 )
                 if getattr(episode, "processed", False):
