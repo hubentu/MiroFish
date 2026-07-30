@@ -16,7 +16,10 @@ dependencies = [
     # LLM 相关
     "openai>=1.0.0",
     
-    # Zep Cloud
+    # 记忆图谱
+    "graphiti-core>=0.11.0",
+
+    # Zep Cloud (legacy)
     "zep-cloud==3.25.0",
     "httpx>=0.27.0",
     
