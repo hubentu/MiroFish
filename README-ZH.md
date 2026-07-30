@@ -122,9 +122,15 @@ LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL_NAME=qwen-plus
 
-# Zep Cloud 配置
-# 每月免费额度即可支撑简单使用：https://app.getzep.com/
-ZEP_API_KEY=your_zep_api_key
+# 知识图谱记忆（Graphiti + Neo4j，默认）
+MEMORY_BACKEND=graphiti
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+
+# 可选：旧版 Zep Cloud 后端
+# MEMORY_BACKEND=zep
+# ZEP_API_KEY=your_zep_api_key
 ```
 
 #### 2. 安装依赖
@@ -144,7 +150,13 @@ npm run setup
 npm run setup:backend
 ```
 
-#### 3. 启动服务
+#### 3. 启动 Neo4j（Graphiti 后端）
+
+```bash
+docker compose -f docker-compose.neo4j.yml up -d
+```
+
+#### 4. 启动服务
 
 ```bash
 # 同时启动前后端（在项目根目录执行）

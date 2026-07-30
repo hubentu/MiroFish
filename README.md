@@ -122,9 +122,15 @@ LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL_NAME=qwen-plus
 
-# Zep Cloud Configuration
-# Free monthly quota is sufficient for simple usage: https://app.getzep.com/
-ZEP_API_KEY=your_zep_api_key
+# Knowledge graph memory (Graphiti + Neo4j, default)
+MEMORY_BACKEND=graphiti
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+
+# Optional legacy Zep Cloud backend:
+# MEMORY_BACKEND=zep
+# ZEP_API_KEY=your_zep_api_key
 ```
 
 #### 2. Install Dependencies
@@ -144,7 +150,13 @@ npm run setup
 npm run setup:backend
 ```
 
-#### 3. Start Services
+#### 3. Start Neo4j (Graphiti backend)
+
+```bash
+docker compose -f docker-compose.neo4j.yml up -d
+```
+
+#### 4. Start Services
 
 ```bash
 # Start both frontend and backend (run from project root)
