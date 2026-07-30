@@ -31,6 +31,27 @@ def test_add_text_batches_returns_batch_submission_via_backend():
     assert len(fake._graphs["mirofish_wire1"]["episodes"]) == 1
 
 
+def test_fake_ingest_does_not_journal_synthetic_batch_id():
+    """Graphiti/Fake have no Batch API — journaling a local UUID caused resume 500."""
+    fake = FakeKnowledgeGraphBackend()
+    svc = GraphBuilderService(backend=fake)
+    svc.create_graph("wired", graph_id="mirofish_wire1")
+    journaled = []
+    submission = svc.add_text_batches(
+        "mirofish_wire1",
+        ["Acme hired Bob."],
+        batch_created_callback=lambda bid, oid: journaled.append((bid, oid)),
+    )
+    assert submission.batch_id  # in-process UUID still present
+    assert journaled == [(None, submission.operation_id)]
+    summary = svc.get_batch_summary(submission.batch_id)
+    assert getattr(summary, "status", None) not in {
+        "queued",
+        "processing",
+        "succeeded",
+    }
+
+
 def test_delete_and_get_graph_data_delegate():
     fake = FakeKnowledgeGraphBackend()
     svc = GraphBuilderService(backend=fake)

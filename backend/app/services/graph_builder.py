@@ -7,6 +7,7 @@ import hashlib
 import uuid
 import time
 import threading
+from types import SimpleNamespace
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 
@@ -240,8 +241,8 @@ class GraphBuilderService:
         """Submit document chunks through the memory backend.
 
         ZepCloudBackend uses Batch API create/add/process with reconciliation.
-        Other backends ingest sequentially. BatchSubmission is preserved for
-        progress/state (local UUID batch_id when the backend has no Batch API).
+        Other backends ingest sequentially. BatchSubmission still carries a
+        local UUID for in-process progress; only real Zep batch IDs are journaled.
         """
 
         if not graph_id:
@@ -283,15 +284,12 @@ class GraphBuilderService:
             use_batch=True,
         )
 
-        # Non-Zep: synthesize BatchSubmission identity when backend has no batch_id.
+        # Non-Zep: local UUID for BatchSubmission only — never journal it.
+        # Resume would call get_batch_summary on a non-Zep backend → was 500.
         if result.batch_id is None:
             if batch_created_callback:
-                # Zep already journaled; only journal for non-batch backends.
-                # (Zep journals inside add_episodes; Fake/Graphiti do not.)
                 batch_created_callback(None, operation_id)
             batch_id = str(uuid.uuid4())
-            if batch_created_callback:
-                batch_created_callback(batch_id, operation_id)
         else:
             batch_id = result.batch_id
 
@@ -311,7 +309,8 @@ class GraphBuilderService:
         """Read a persisted batch identity for restart reconciliation."""
         getter = getattr(self.backend, "get_batch_summary", None)
         if getter is None:
-            raise RuntimeError("Current memory backend does not support Zep batch summary")
+            # ponytail: non-Zep has no Batch API; benign status → API 409, not 500
+            return SimpleNamespace(status="unavailable", batch_id=batch_id)
         return getter(batch_id)
 
     def _wait_for_batch(

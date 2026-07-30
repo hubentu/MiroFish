@@ -236,6 +236,50 @@ def test_stale_build_after_restart_is_recoverable_instead_of_reused(monkeypatch)
     assert saved == [ProjectStatus.FAILED]
 
 
+def test_stale_build_with_synthetic_batch_id_is_409_not_500(monkeypatch):
+    """Legacy Graphiti/Fake journals could store a local UUID; must not 500."""
+    from app.services.graph_builder import GraphBuilderService
+    from app.services.memory.fake_backend import FakeKnowledgeGraphBackend
+
+    project = _project(ProjectStatus.GRAPH_BUILDING)
+    project.zep_batch_id = "synthetic-local-uuid"
+    saved = []
+    _graphiti_config_without_zep(monkeypatch)
+    monkeypatch.setattr(
+        graph_api.ProjectManager,
+        "get_project",
+        classmethod(lambda _cls, _project_id: project),
+    )
+    monkeypatch.setattr(
+        graph_api.ProjectManager,
+        "save_project",
+        classmethod(lambda _cls, value: saved.append(value.status)),
+    )
+    monkeypatch.setattr(
+        graph_api,
+        "TaskManager",
+        lambda: SimpleNamespace(get_task=lambda _task_id: None),
+    )
+    monkeypatch.setattr(
+        graph_api,
+        "GraphBuilderService",
+        lambda **_kw: GraphBuilderService(backend=FakeKnowledgeGraphBackend()),
+    )
+
+    app = Flask(__name__)
+    with app.test_request_context(
+        "/api/graph/build",
+        method="POST",
+        json={"project_id": "proj-1"},
+    ):
+        body, status = _json_result(graph_api.build_graph())
+
+    assert status == 409
+    assert body.get("recoverable") is True
+    assert project.status == ProjectStatus.FAILED
+    assert saved == [ProjectStatus.FAILED]
+
+
 def test_stale_build_resumes_a_persisted_processing_batch(monkeypatch):
     project = _project(ProjectStatus.GRAPH_BUILDING)
     created_threads = []

@@ -259,7 +259,35 @@ class GraphitiBackend:
         limit: int = 10,
         scope: str = "edges",
     ) -> SearchHits:
-        del scope  # ponytail: Graphiti search() returns edges only; nodes via list later
+        # Graphiti client.search is edges-only; for scope=nodes keyword-filter list_nodes.
+        if scope == "nodes":
+            query_lower = (query or "").lower()
+            matched_nodes: list[dict[str, Any]] = []
+            facts: list[str] = []
+            for node in self.list_nodes(graph_id):
+                hay = f"{node.name} {node.summary}".lower()
+                if query_lower and query_lower not in hay:
+                    continue
+                matched_nodes.append(
+                    {
+                        "uuid": node.uuid,
+                        "name": node.name,
+                        "labels": list(node.labels or []),
+                        "summary": node.summary or "",
+                    }
+                )
+                if node.summary:
+                    facts.append(f"[{node.name}]: {node.summary}")
+                if len(matched_nodes) >= limit:
+                    break
+            return SearchHits(
+                facts=facts,
+                edges=[],
+                nodes=matched_nodes,
+                query=query,
+                total_count=len(facts) + len(matched_nodes),
+            )
+
         result = run_sync(
             self.client.search(
                 query=query,

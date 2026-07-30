@@ -56,6 +56,27 @@ def test_search_maps_edges_to_search_hits():
     assert hits.total_count == 1
 
 
+def test_search_scope_nodes_keyword_filters_list_nodes():
+    from app.services.memory.types import GraphNode
+
+    client = MagicMock()
+    client.driver = None
+    client.search = AsyncMock(return_value=[])
+    backend = GraphitiBackend(client=client)
+    backend.create_graph("mirofish_abc", "Demo")
+    backend.list_nodes = MagicMock(
+        return_value=[
+            GraphNode(uuid="n1", name="Alice", labels=["Person"], summary="likes tea"),
+            GraphNode(uuid="n2", name="Bob", labels=["Person"], summary="likes coffee"),
+        ]
+    )
+    hits = backend.search("mirofish_abc", "tea", limit=10, scope="nodes")
+    client.search.assert_not_called()
+    assert [n["uuid"] for n in hits.nodes] == ["n1"]
+    assert hits.edges == []
+    assert any("tea" in f.lower() for f in hits.facts)
+
+
 def test_get_node_edges_filters_by_group_id():
     edge_in = MagicMock()
     edge_in.uuid = "e1"
