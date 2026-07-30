@@ -4,21 +4,28 @@ import importlib
 import pytest
 
 
+_CONFIG_KEYS = (
+    "MEMORY_BACKEND",
+    "ZEP_API_KEY",
+    "ZEP_API_URL",
+    "NEO4J_URI",
+    "NEO4J_USER",
+    "NEO4J_PASSWORD",
+    "LLM_API_KEY",
+)
+
+
 def _reload_config(monkeypatch, **env):
-    for key in (
-        "MEMORY_BACKEND",
-        "ZEP_API_KEY",
-        "ZEP_API_URL",
-        "NEO4J_URI",
-        "NEO4J_USER",
-        "NEO4J_PASSWORD",
-        "LLM_API_KEY",
-    ):
+    for key in _CONFIG_KEYS:
         monkeypatch.delenv(key, raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
+    # ponytail: block root .env from overriding test env on reload
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *_a, **_k: False)
     import app.config as config_mod
     importlib.reload(config_mod)
+    for key in _CONFIG_KEYS:
+        setattr(config_mod.Config, key, env.get(key))
     return config_mod.Config
 
 
