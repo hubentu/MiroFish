@@ -79,6 +79,52 @@ def test_platform_completion_does_not_publish_terminal_success_before_barrier(
     assert state.runner_status == RunnerStatus.RUNNING
 
 
+def test_platform_completion_finalizes_after_zep_drain(monkeypatch, tmp_path):
+    simulation_id = "sim-finalize"
+    (tmp_path / simulation_id / "twitter").mkdir(parents=True)
+    (tmp_path / simulation_id / "twitter" / "actions.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.RUNNING,
+        twitter_completed=True,
+        twitter_running=False,
+    )
+    stop_calls = []
+
+    monkeypatch.setattr(
+        SimulationRunner,
+        "get_run_state",
+        classmethod(lambda _cls, _simulation_id: state),
+    )
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_save_run_state",
+        classmethod(lambda _cls, _state: None),
+    )
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_sync_simulation_status",
+        classmethod(lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(lambda _cls, sid: stop_calls.append(sid)),
+    )
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+
+    try:
+        assert SimulationRunner._finalize_if_platforms_completed(simulation_id) is True
+        assert stop_calls == [simulation_id]
+        assert state.runner_status == RunnerStatus.COMPLETED
+        assert state.completed_at is not None
+        assert simulation_id not in SimulationRunner._graph_memory_enabled
+    finally:
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+
 def test_manual_stop_timeout_leaves_monitor_owned_state_stopping(monkeypatch):
     state = SimulationRunState(
         simulation_id="sim-timeout",

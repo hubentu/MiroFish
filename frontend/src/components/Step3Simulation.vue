@@ -93,7 +93,7 @@
       <div class="action-controls">
         <button 
           class="action-btn primary"
-          :disabled="phase !== 2 || isGeneratingReport"
+          :disabled="!canGenerateReport || isGeneratingReport"
           @click="handleNextStep"
         >
           <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
@@ -341,6 +341,26 @@ const redditActionsCount = computed(() => {
   return allActions.value.filter(a => a.platform === 'reddit').length
 })
 
+// 检查所有启用的平台是否已完成
+const checkPlatformsCompleted = (data) => {
+  if (!data) return false
+
+  const twitterCompleted = data.twitter_completed === true
+  const redditCompleted = data.reddit_completed === true
+  const twitterEnabled = (data.twitter_actions_count > 0) || data.twitter_running || twitterCompleted
+  const redditEnabled = (data.reddit_actions_count > 0) || data.reddit_running || redditCompleted
+
+  if (!twitterEnabled && !redditEnabled) return false
+  if (twitterEnabled && !twitterCompleted) return false
+  if (redditEnabled && !redditCompleted) return false
+  return true
+}
+
+// Platforms may finish rounds while runner stays "running" (wait-for-commands).
+const canGenerateReport = computed(() => {
+  return phase.value === 2 || checkPlatformsCompleted(runStatus.value)
+})
+
 // 格式化模拟流逝时间（根据轮次和每轮分钟数计算）
 const formatElapsedTime = (currentRound) => {
   if (!currentRound || currentRound <= 0) return '0h 0m'
@@ -398,7 +418,8 @@ const doStartSimulation = async () => {
     const params = {
       simulation_id: props.simulationId,
       platform: 'parallel',
-      force: true,  // 强制重新开始
+      // ponytail: never force-restart on mount/HMR — that races report finalize
+      force: false,
       enable_graph_memory_update: true  // 开启动态图谱更新
     }
     
@@ -527,35 +548,15 @@ const fetchRunStatus = async () => {
         phase.value = 2
         stopPolling()
         emit('update-status', 'completed')
+      } else if (phase.value < 2 && checkPlatformsCompleted(data)) {
+        // Unlock the report CTA while backend drains Zep / waits for commands.
+        phase.value = 2
+        emit('update-status', 'completed')
       }
     }
   } catch (err) {
     console.warn('获取运行状态失败:', err)
   }
-}
-
-// 检查所有启用的平台是否已完成
-const checkPlatformsCompleted = (data) => {
-  // 如果没有任何平台数据，返回 false
-  if (!data) return false
-  
-  // 检查各平台的完成状态
-  const twitterCompleted = data.twitter_completed === true
-  const redditCompleted = data.reddit_completed === true
-  
-  // 如果至少有一个平台完成了，检查是否所有启用的平台都完成了
-  // 通过 actions_count 判断平台是否被启用（如果 count > 0 或 running 曾为 true）
-  const twitterEnabled = (data.twitter_actions_count > 0) || data.twitter_running || twitterCompleted
-  const redditEnabled = (data.reddit_actions_count > 0) || data.reddit_running || redditCompleted
-  
-  // 如果没有任何平台被启用，返回 false
-  if (!twitterEnabled && !redditEnabled) return false
-  
-  // 检查所有启用的平台是否都已完成
-  if (twitterEnabled && !twitterCompleted) return false
-  if (redditEnabled && !redditCompleted) return false
-  
-  return true
 }
 
 const fetchRunStatusDetail = async () => {
@@ -642,6 +643,22 @@ const formatActionTime = (timestamp) => {
   }
 }
 
+const waitForTerminalRunStatus = async (timeoutMs = 180000) => {
+  const terminal = new Set(['completed', 'stopped', 'failed'])
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const res = await getRunStatus(props.simulationId)
+    if (res.success && res.data) {
+      runStatus.value = res.data
+      if (terminal.has(res.data.runner_status)) {
+        return res.data
+      }
+    }
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  throw new Error('Timed out waiting for simulation to reach a terminal status')
+}
+
 const handleNextStep = async () => {
   if (!props.simulationId) {
     addLog(t('log.errorMissingSimId'))
@@ -654,9 +671,30 @@ const handleNextStep = async () => {
   }
   
   isGeneratingReport.value = true
+  stopPolling()
   addLog(t('log.startingReportGen'))
   
   try {
+    let status = runStatus.value?.runner_status
+    if (!['completed', 'stopped'].includes(status)) {
+      // ponytail: report API requires terminal runner_status; stop drains Zep
+      addLog(t('log.stoppingSim'))
+      const stopRes = await stopSimulation({ simulation_id: props.simulationId })
+      if (!stopRes.success && !stopRes.pending) {
+        addLog(t('log.stopFailed', { error: stopRes.error || t('common.unknownError') }))
+        isGeneratingReport.value = false
+        return
+      }
+      const terminal = await waitForTerminalRunStatus()
+      if (terminal.runner_status === 'failed') {
+        addLog(t('log.simFailed') + (terminal.error ? `: ${terminal.error}` : ''))
+        isGeneratingReport.value = false
+        return
+      }
+      phase.value = 2
+      status = terminal.runner_status
+    }
+
     const res = await generateReport({
       simulation_id: props.simulationId,
       force_regenerate: true
@@ -688,11 +726,47 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
-onMounted(() => {
+onMounted(async () => {
   addLog(t('log.step3Init'))
-  if (props.simulationId) {
-    doStartSimulation()
+  if (!props.simulationId) return
+
+  // Resume an in-flight/finished run instead of force-restarting (HMR/refresh safe).
+  try {
+    const res = await getRunStatus(props.simulationId)
+    if (res.success && res.data) {
+      runStatus.value = res.data
+      const status = res.data.runner_status
+      if (status === 'failed') {
+        phase.value = 2
+        emit('update-status', 'error')
+        return
+      }
+      if (['completed', 'stopped'].includes(status) || checkPlatformsCompleted(res.data)) {
+        phase.value = 2
+        emit('update-status', 'completed')
+        if (['running', 'stopping'].includes(status)) {
+          startStatusPolling()
+          startDetailPolling()
+        }
+        return
+      }
+      if (['running', 'starting', 'stopping', 'paused'].includes(status)) {
+        phase.value = status === 'stopping' ? 2 : 1
+        startStatusPolling()
+        startDetailPolling()
+        return
+      }
+      // idle after a prior run: do not auto-start (avoids wiping a just-stopped sim)
+      if (status === 'idle') {
+        phase.value = 0
+        return
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to resume simulation status:', err)
   }
+
+  await doStartSimulation()
 })
 
 onUnmounted(() => {

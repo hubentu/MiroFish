@@ -153,8 +153,35 @@ class LLMClient:
             max_tokens=max_tokens,
             response_format=response_format,
         )
-        content = extract_chat_completion_text(response)
-        return _clean_chat_text(content)
+        content = _clean_chat_text(extract_chat_completion_text(response))
+        choice = response.choices[0] if getattr(response, "choices", None) else None
+        finish_reason = getattr(choice, "finish_reason", None) if choice else None
+
+        # ponytail: one continuation when the provider hits the output token cap;
+        # longer reports still need a higher max_tokens / multi-pass writer.
+        if finish_reason == "length" and content:
+            logger.warning(
+                "LLM chat hit max_tokens (finish_reason=length); continuing once"
+            )
+            cont_messages = list(messages) + [
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous answer was cut off by the output length "
+                        "limit. Continue exactly from where you stopped. Do not "
+                        "repeat text that was already written."
+                    ),
+                },
+            ]
+            cont = self._create_completion(
+                messages=cont_messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+            )
+            content += _clean_chat_text(extract_chat_completion_text(cont))
+        return content
     
     def chat_json(
         self,

@@ -231,6 +231,20 @@ const handleNewProject = async () => {
   }
 }
 
+const graphNodeCount = (data) => data?.node_count || data?.nodes?.length || 0
+
+// ponytail: Zep often finishes after our 600s wait; unlock step 3 if graph already has nodes
+const tryRecoverFailedBuild = async (project) => {
+  if (!project?.graph_id) return false
+  await loadGraph(project.graph_id)
+  const nodes = graphNodeCount(graphData.value)
+  if (nodes <= 0) return false
+  currentPhase.value = 2
+  error.value = ''
+  addLog(`Recovered usable graph after build failure (${nodes} nodes).`)
+  return true
+}
+
 const loadProject = async () => {
   try {
     loading.value = true
@@ -249,6 +263,10 @@ const loadProject = async () => {
       } else if (res.data.status === 'graph_completed' && res.data.graph_id) {
         currentPhase.value = 2
         await loadGraph(res.data.graph_id)
+      } else if (res.data.status === 'failed') {
+        error.value = res.data.error || 'Project failed'
+        addLog(`Project failed: ${error.value}`)
+        await tryRecoverFailedBuild(res.data)
       }
     } else {
       error.value = res.error
@@ -361,6 +379,11 @@ const pollTaskStatus = async (taskId) => {
         stopPolling()
         error.value = task.error
         addLog(`Graph build task failed: ${task.error}`)
+        const projRes = await getProject(currentProjectId.value)
+        if (projRes.success) {
+          projectData.value = projRes.data
+          await tryRecoverFailedBuild(projRes.data)
+        }
       }
     }
   } catch (e) {
