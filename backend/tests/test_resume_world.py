@@ -30,6 +30,76 @@ def clear_runner_state():
     clear()
 
 
+def test_resume_for_interview_reclaims_stale_running_run_state(
+    tmp_path, monkeypatch
+):
+    """Container restart leaves run_state=running with no process; resume must work."""
+    simulation_id = "sim_imported"
+    sim_dir = tmp_path / simulation_id
+    sim_dir.mkdir()
+    (sim_dir / "simulation_config.json").write_text(
+        json.dumps({"time_config": {}}), encoding="utf-8"
+    )
+    (sim_dir / "reddit_profiles.json").write_text("[]", encoding="utf-8")
+    (sim_dir / "reddit_simulation.db").write_bytes(b"existing-db")
+    (sim_dir / "run_state.json").write_text(
+        json.dumps(
+            {
+                "simulation_id": simulation_id,
+                "runner_status": "running",
+                "process_pid": 99999,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = tmp_path / "scripts" / "run_parallel_simulation.py"
+    script.parent.mkdir()
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(SimulationRunner, "SCRIPTS_DIR", str(script.parent))
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_sync_simulation_status",
+        classmethod(lambda cls, *args, **kwargs: None),
+    )
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_monitor_simulation",
+        classmethod(lambda cls, *args, **kwargs: None),
+    )
+    monkeypatch.setattr(
+        SimulationRunner, "check_env_alive", classmethod(lambda cls, sid: False)
+    )
+
+    class Process:
+        pid = 123
+
+        def poll(self):
+            return None
+
+    class Thread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    spawned = {}
+
+    def popen(cmd, **kwargs):
+        spawned["cmd"] = cmd
+        return Process()
+
+    monkeypatch.setattr("app.services.simulation_runner.subprocess.Popen", popen)
+    monkeypatch.setattr("app.services.simulation_runner.threading.Thread", Thread)
+
+    state = SimulationRunner.resume_for_interview(simulation_id)
+
+    assert state.runner_status == RunnerStatus.RUNNING
+    assert "--interview-only" in spawned["cmd"]
+
+
 def test_resume_for_interview_refuses_when_ipc_env_alive(tmp_path, monkeypatch):
     simulation_id = "sim_imported"
     sim_dir = tmp_path / simulation_id

@@ -433,6 +433,28 @@ class SimulationRunner:
                 RunnerStatus.PAUSED,
                 RunnerStatus.STOPPING,
             }
+            process = cls._processes.get(simulation_id)
+            process_alive = process is not None and process.poll() is None
+            if (
+                process is not None
+                and not process_alive
+            ):
+                cls._processes.pop(simulation_id, None)
+
+            # Persist "running" across container restart with no live process —
+            # reclaim so Start world / resume can proceed.
+            if (
+                existing
+                and existing.runner_status in active_statuses
+                and not process_alive
+                and ZepGraphMemoryManager.get_updater(simulation_id) is None
+            ):
+                existing.runner_status = RunnerStatus.STOPPED
+                existing.process_pid = None
+                existing.error = "reclaimed stale runner after process exit"
+                cls._save_run_state(existing)
+                existing = cls.get_run_state(simulation_id)
+
             if (
                 existing and existing.runner_status in active_statuses
             ) or ZepGraphMemoryManager.get_updater(simulation_id) is not None:
