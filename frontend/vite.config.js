@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-    open: true,
+    open: false, // no browser in Docker / headless hosts
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:5001',
