@@ -17,7 +17,8 @@ Today there is only a static offline HTML exporter (`scripts/export_html.py`) wi
   - Chat with Report Agent
   - Chat with any individual agent
   - Send survey / questionnaire into the world
-- Deploy path: document and rely on existing `docker compose` so both instances run the same stack (`uploads/` volume + Neo4j).
+- Deploy path: `docker compose` starts **MiroFish + local Neo4j** by default (Graphiti/Neo4j memory backend). Viewer instances use the same stack.
+- Transfer is **one file only**: `.mirofish.zip` includes report, simulation artifacts, **and** the graph. No separate Neo4j dump or second artifact.
 - Import UX: Home / history **Import report**; Export UX: Step 5 when report is complete.
 
 ## Non-goals
@@ -25,33 +26,35 @@ Today there is only a static offline HTML exporter (`scripts/export_html.py`) wi
 - Re-running ontology / graph build / multi-round simulation on the receiving instance.
 - Standalone static website that chats without MiroFish.
 - Cross-version migration beyond a single `format_version` (unsupported versions fail clearly).
-- Sharing Neo4j volumes between machines as the primary transfer mechanism (zip is primary; Compose is deploy).
+- Shipping a separate Neo4j volume backup or multi-file transfer kit (graph travels inside the zip).
+- Making Zep Cloud the default for viewer instances.
 
 ## Decision summary
 
 | Choice | Selection |
 |--------|-----------|
-| Transfer unit | Versioned `.mirofish.zip` (one project’s results) |
-| Deploy | Docker Compose (existing) for identical viewer instances |
-| Report Agent graph | Bundled `graph.json` snapshot; tools use snapshot when present |
+| Transfer unit | Single `.mirofish.zip` (report + sim + graph inside) |
+| Deploy | Docker Compose starts **local Neo4j** + MiroFish; Graphiti+Neo4j default |
+| Report Agent graph | Graph embedded in zip; **import loads it into local Neo4j** under the new `graph_id` |
 | Live agent chat / survey | Include full simulation dir; **resume OASIS** into wait-for-commands after import |
-| IDs on import | Mint new `project_id` / `simulation_id` / `report_id`; remap refs |
+| IDs on import | Mint new `project_id` / `simulation_id` / `report_id` / `graph_id`; remap refs |
 | Interviews without env | Out of scope — env must be started so `check_env_alive()` succeeds |
 
 ## Architecture
 
 ```
-Instance A (completed run)          Package              Instance B (viewer)
-─────────────────────────          ─────────            ────────────────────
-uploads/project|sim|report   →   .mirofish.zip   →   uploads/ (new IDs)
-graph via API snapshot       →   graph/graph.json →  snapshot (+ optional Neo4j load)
+Instance A (completed run)          ONE file             Instance B (viewer Compose)
+─────────────────────────          ─────────            ──────────────────────────
+uploads/project|sim|report   →                       →  uploads/ (new IDs)
+graph (from live Neo4j/API)  →   .mirofish.zip      →  load graph/graph.json → local Neo4j
+                                 (graph inside)         Graphiti tools use new graph_id
                                                       │
-                                                      ├─ Step 5 Report Agent (snapshot tools)
+                                                      ├─ Step 5 Report Agent (Neo4j-backed tools)
                                                       └─ Start world → OASIS wait-for-commands
                                                            → interview/batch → live chat + survey
 ```
 
-Both instances run the same MiroFish server. Live chat does not talk only to Flask: UI → `/api/simulation/interview*` → IPC → OASIS worker for that `simulation_id`. Import restores files; **Start world** brings the worker up.
+Both instances run the same MiroFish server with **local Neo4j** (Compose). Transfer is a single zip; the receiving Neo4j is empty until import hydrates it from `graph/graph.json`. Live chat still needs OASIS: UI → `/api/simulation/interview*` → IPC → worker for that `simulation_id`. Import restores files; **Start world** brings the worker up.
 
 ## Package format
 
@@ -75,8 +78,10 @@ report/
   full_report.md
   section_*.md             # if present
 graph/
-  graph.json               # nodes/edges snapshot from graph data API
+  graph.json               # REQUIRED — full nodes/edges for Neo4j hydrate on import
 ```
+
+The zip is the only handoff artifact. Graph must be inside it so instance B does not need instance A’s Neo4j volume.
 
 `manifest.json` fields (minimum):
 
@@ -86,18 +91,18 @@ graph/
 - `source`: original `project_id`, `simulation_id`, `report_id`, `graph_id`
 - `platforms`: which sim DBs/profiles are included
 - `capabilities`: `{ "report_agent": true, "live_world": true|false }`  
-  (`live_world` false if DBs/profiles missing — import still allowed for report-only chat)
+  (`live_world` false if DBs/profiles missing — import still allowed for Report Agent after Neo4j hydrate)
 
 ## Components
 
 ### Backend
 
-- `POST /api/report/export` — body `{ "report_id" }` → build zip → download.  
-  Resolve simulation + project from report meta; fetch graph if needed; cache under `uploads/exports/`.
-- `POST /api/report/import` — multipart zip → validate → mint IDs → atomic write into `uploads/{projects,simulations,reports}/` + store `graph.json` beside sim or under `uploads/exports/` keyed by new graph id → return `{ project_id, simulation_id, report_id, graph_id, capabilities }`.
-- Helper module (e.g. `report_transfer.py`): pack, unpack, ID remap, validation. Keep routes thin.
+- `POST /api/report/export` — body `{ "report_id" }` → build **one** `.mirofish.zip` (including graph) → download.  
+  Resolve simulation + project from report meta; export graph from the default Graphiti/Neo4j backend (or graph data API); fail export if graph cannot be included.
+- `POST /api/report/import` — multipart zip → validate (require `graph/graph.json`) → mint IDs → atomic write into `uploads/{projects,simulations,reports}/` → **hydrate graph into local Neo4j** under the new `graph_id` → return `{ project_id, simulation_id, report_id, graph_id, capabilities }`.
+- Helper module (e.g. `report_transfer.py`): pack, unpack, ID remap, validation, Neo4j hydrate. Keep routes thin.
 - **Resume world:** endpoint or reuse/extend existing simulation start so an imported sim with configs + DBs enters OASIS **wait-for-commands** without re-running rounds. Must make `SimulationIPCClient.check_env_alive()` true.
-- Report Agent / graph tools: if a local `graph.json` exists for the simulation’s `graph_id`, use it for search/entity/stats tools; otherwise keep current live memory-backend behavior.
+- Report Agent / graph tools: after import, use the **default Neo4j-backed** memory backend with the new `graph_id` (no special snapshot-only tool path required once hydrate succeeds). Keep a zip-local `graph.json` copy on disk for re-hydrate/debug if needed.
 
 ### Frontend
 
@@ -107,36 +112,38 @@ graph/
 
 ### Compose
 
-- Existing `docker-compose.yml` (mirofish + neo4j, `./backend/uploads` mount) is the supported viewer deploy.
-- Docs: viewer = configure `.env` (LLM keys) → `docker compose up` → Import zip → Start world → Step 5.
+- `docker-compose.yml` must start **local Neo4j** and MiroFish by default (`depends_on` healthy Neo4j; `./backend/uploads` mount). Viewer default memory backend: Graphiti + that Neo4j.
+- Docs: viewer = configure `.env` (LLM keys + Neo4j password) → `docker compose up` → Import **one** zip → Start world → Step 5.
 
 ## Data flow
 
-1. Instance A finishes report → user clicks Export → zip download.  
-2. Instance B Import → disk layout looks like a normal completed project with remapped IDs.  
-3. User opens Step 5 → Report Agent works immediately (report + graph snapshot + B’s LLM).  
+1. Instance A finishes report → Export → single `.mirofish.zip` (graph inside).  
+2. Instance B Import → write uploads + hydrate graph into **local Neo4j** with new IDs.  
+3. User opens Step 5 → Report Agent works (report + Neo4j graph + B’s LLM).  
 4. Start world → OASIS resumes from imported DBs/profiles → individual chat + survey use existing `interview` / `interview/batch` APIs.
 
 ## Error handling
 
-- Export: missing report, empty markdown, graph fetch failure, incomplete sim when claiming `live_world` → clear 4xx/5xx with message. Prefer exporting with `live_world: false` over failing if only DBs are missing (still useful for Report Agent).
-- Import: bad zip, missing `manifest.json` / required report files / unsupported `format_version` → 400. Unpack to temp, validate, then move (no partial `uploads/` corruption).
-- Start world: missing configs/DBs or OASIS start failure → surface error; Report Agent remains usable.
+- Export: missing report, empty markdown, **missing/unloadable graph**, incomplete sim when claiming `live_world` → clear 4xx/5xx. Prefer `live_world: false` over failing if only DBs are missing (Report Agent still needs a successful graph include).
+- Import: bad zip, missing `manifest.json` / report files / **`graph/graph.json`**, unsupported `format_version`, Neo4j hydrate failure → 400/5xx with message. Unpack to temp, validate, then move + hydrate (no partial `uploads/` corruption; failed hydrate should not leave a “ready” imported project without graph).
+- Start world: missing configs/DBs or OASIS start failure → surface error; Report Agent remains usable if Neo4j hydrate succeeded.
 - Chat/survey while env down → existing “environment not running” errors; UI should prompt Start world.
 
 ## Testing
 
-- Unit: pack/unpack round-trip, ID remap, manifest validation, reject bad `format_version`.
-- Unit: Report Agent tools resolve answers from a fixture `graph.json` without live Neo4j/Zep.
-- Integration (as feasible): import zip → export meta present → chat report endpoint succeeds with mocked LLM; resume world sets env alive (or mock IPC) so interview path is wired.
-- Manual: two Compose (or local) instances — export from A, import on B, Start world, exercise all three Interactive Tools.
+- Unit: pack/unpack round-trip (graph required in zip), ID remap, manifest validation, reject bad `format_version` / missing graph.
+- Unit/integration: import hydrate writes nodes/edges into Neo4j under new `graph_id` (testcontainer or mocked backend).
+- Integration (as feasible): import zip → Report Agent chat with mocked LLM against hydrated graph; resume world sets env alive (or mock IPC) so interview path is wired.
+- Manual: two Compose instances (each with local Neo4j) — export one zip from A, import on B, Start world, exercise all three Interactive Tools.
 
 ## Implementation notes
 
 - Reuse existing disk layouts under `backend/uploads/` rather than inventing a parallel store.
+- Compose already includes a `neo4j` service; ensure docs and defaults assume it is always up for transfer/viewer use.
 - Existing `scripts/export_html.py` stays as optional static viewer; not the transfer path.
 - YAGNI: no multi-project bulk export; no CLI required for v1 (Compose + UI is enough); CLI can wrap the same helper later.
 
 ## Open implementation detail (resolve in plan)
 
-Exact “resume without re-running rounds” hook in `SimulationRunner` / parallel runner — prefer extending current start/wait-for-commands path over a parallel interview stack. Plan should spike this early; if resume-from-DB is missing, add a minimal resume entrypoint as part of this feature.
+1. Exact “resume without re-running rounds” hook in `SimulationRunner` / parallel runner — prefer extending current start/wait-for-commands path. Spike early; add a minimal resume entrypoint if missing.
+2. Exact Graphiti/Neo4j **hydrate from `graph.json`** API (bulk node/edge write under new `group_id`/`graph_id`) — plan should spike against current `KnowledgeGraphBackend` / GraphitiBackend; add a dedicated import helper if the protocol lacks bulk ingest.
