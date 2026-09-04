@@ -76,6 +76,44 @@ def test_graphiti_hydrate_rejects_cross_graph_node_uuid_collision():
     assert driver.execute_query.await_count == 1
 
 
+def test_graphiti_hydrate_writes_datetime_created_at():
+    """Graphiti record helpers require Neo4j DateTime (not ISO strings)."""
+    from datetime import datetime
+
+    driver = MagicMock()
+    driver.execute_query = AsyncMock(
+        side_effect=[
+            ([{"collisions": []}], None, None),  # collision check
+            MagicMock(),  # nodes MERGE
+            MagicMock(),  # edges MERGE
+        ]
+    )
+    client = MagicMock(driver=driver)
+    backend = GraphitiBackend(client=client)
+    backend._graphs["mirofish_dt"] = {"name": "mirofish_dt"}
+
+    backend.hydrate_graph_snapshot(
+        "mirofish_dt",
+        {
+            "nodes": [
+                {
+                    "uuid": "n1",
+                    "name": "Alice",
+                    "labels": ["Person"],
+                    "created_at": "2026-01-02T03:04:05Z",
+                    "attributes": {},
+                }
+            ],
+            "edges": [],
+        },
+    )
+
+    node_call = driver.execute_query.await_args_list[1]
+    props = node_call.kwargs["nodes"][0]["properties"]
+    assert isinstance(props["created_at"], datetime)
+    assert props["created_at"].year == 2026
+
+
 @pytest.mark.skipif(
     os.getenv("MIROFISH_NEO4J_INTEGRATION") != "1", reason="needs live Neo4j"
 )

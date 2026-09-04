@@ -427,7 +427,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { chatWithReport, exportReportPackage, getReport, getAgentLog } from '../api/report'
+import { chatWithReport, exportReportPackage, getReport, getReportSections, getAgentLog } from '../api/report'
 import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
 
 const { t } = useI18n()
@@ -915,7 +915,11 @@ const loadReportData = async () => {
     const reportRes = await getReport(props.reportId)
     if (reportRes.success && reportRes.data) {
       reportCompleted.value = reportRes.data.status === 'completed'
-      // Load agent logs to get report outline and sections
+      // Imported packages have outline.json but no agent-log replay
+      if (reportRes.data.outline) {
+        reportOutline.value = reportRes.data.outline
+      }
+      await loadGeneratedSections()
       await loadAgentLogs()
     }
   } catch (err) {
@@ -941,6 +945,23 @@ const exportReport = async () => {
     addLog(t('step5.exportFailed', { error: error.message }))
   } finally {
     isExporting.value = false
+  }
+}
+
+const loadGeneratedSections = async () => {
+  if (!props.reportId) return
+
+  try {
+    const res = await getReportSections(props.reportId)
+    if (res.success && res.data?.sections) {
+      for (const section of res.data.sections) {
+        if (section.section_index != null && section.content) {
+          generatedSections.value[section.section_index] = section.content
+        }
+      }
+    }
+  } catch (err) {
+    addLog(t('log.loadReportFailed', { error: err.message }))
   }
 }
 

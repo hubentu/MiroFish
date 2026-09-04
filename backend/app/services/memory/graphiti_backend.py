@@ -26,6 +26,25 @@ def _dt_str(value: Any) -> str | None:
     return str(value)
 
 
+def _neo4j_dt(value: Any) -> datetime | None:
+    """Parse snapshot timestamps into driver-native datetimes.
+
+    Graphiti's record helpers call ``created_at.to_native()``; ISO strings break that.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _edge_to_dict(edge: Any) -> dict[str, Any]:
     return {
         "uuid": getattr(edge, "uuid", None),
@@ -225,7 +244,7 @@ class GraphitiBackend:
         if not self.graph_exists(graph_id):
             self.create_graph(graph_id, graph_id)
 
-        imported_at = datetime.now(timezone.utc).isoformat()
+        imported_at = datetime.now(timezone.utc)
         nodes = []
         for node in snapshot_nodes:
             properties = {
@@ -234,7 +253,7 @@ class GraphitiBackend:
                 "name": node.get("name", ""),
                 "group_id": graph_id,
                 "summary": node.get("summary", ""),
-                "created_at": node.get("created_at") or imported_at,
+                "created_at": _neo4j_dt(node.get("created_at")) or imported_at,
             }
             nodes.append(
                 {
@@ -255,10 +274,10 @@ class GraphitiBackend:
                 "source_node_uuid": edge["source_node_uuid"],
                 "target_node_uuid": edge["target_node_uuid"],
                 "group_id": graph_id,
-                "created_at": edge.get("created_at") or imported_at,
-                "valid_at": edge.get("valid_at"),
-                "invalid_at": edge.get("invalid_at"),
-                "expired_at": edge.get("expired_at"),
+                "created_at": _neo4j_dt(edge.get("created_at")) or imported_at,
+                "valid_at": _neo4j_dt(edge.get("valid_at")),
+                "invalid_at": _neo4j_dt(edge.get("invalid_at")),
+                "expired_at": _neo4j_dt(edge.get("expired_at")),
                 "episodes": list(edge.get("episodes", [])),
             }
             edges.append(

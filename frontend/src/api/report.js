@@ -43,6 +43,14 @@ export const getReport = (reportId) => {
 }
 
 /**
+ * 获取已生成的报告章节（导入后无 agent-log 时用）
+ * @param {string} reportId
+ */
+export const getReportSections = (reportId) => {
+  return service.get(`/api/report/${reportId}/sections`)
+}
+
+/**
  * 与 Report Agent 对话
  * @param {Object} data - { simulation_id, message, chat_history? }
  */
