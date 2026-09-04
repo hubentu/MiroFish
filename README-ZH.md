@@ -193,7 +193,7 @@ docker compose up -d
 ## 将报告迁移到另一台实例
 
 1. 源实例 Step 5 → **Export**（单个 `.mirofish.zip`，含图谱）。
-2. 查看端：配置 `.env`（LLM + `NEO4J_PASSWORD`），然后 `docker compose up -d`。
+2. 查看端：配置 `.env`（LLM + `NEO4J_PASSWORD`；Compose 会默认覆盖 `NEO4J_URI=bolt://neo4j:7687`），然后 `docker compose up -d`。
 3. 首页 → **Import report** → 选择 zip。
 4. Step 5 → **Start world**（个体对话 / 问卷需先启动世界）。
 5. 导入后 Report Agent 可用；世界运行后 live agent 工具可用。

@@ -22,6 +22,8 @@ services:
     container_name: mirofish
     env_file:
       - .env
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
     ports:
       - "3000:3000"
       - "5001:5001"

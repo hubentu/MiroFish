@@ -193,7 +193,7 @@ Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 
 ## Transfer a report to another instance
 
 1. Source instance Step 5 → **Export** (one `.mirofish.zip`, graph included).
-2. Viewer: configure `.env` (LLM + `NEO4J_PASSWORD`), then `docker compose up -d`.
+2. Viewer: configure `.env` (LLM + `NEO4J_PASSWORD`; `NEO4J_URI` defaults to `bolt://neo4j:7687` via Compose), then `docker compose up -d`.
 3. Home → **Import report** → select the zip.
 4. Step 5 → **Start world** (required for individual chat / survey).
 5. Report Agent works after import; live agent tools work after the world is running.
