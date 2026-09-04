@@ -27,6 +27,7 @@
       <div class="section-line"></div>
     </div>
     <div v-if="importError" class="import-error">{{ importError }}</div>
+    <div v-if="deleteError" class="import-error">{{ deleteError }}</div>
 
     <!-- 卡片容器（只在有项目时显示） -->
     <div v-if="projects.length > 0" class="cards-container" :class="{ expanded: isExpanded }" :style="containerStyle">
@@ -43,21 +44,31 @@
         <!-- 卡片头部：simulation_id 和 功能可用状态 -->
         <div class="card-header">
           <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
-          <div class="card-status-icons">
-            <span 
-              class="status-icon" 
-              :class="{ available: project.project_id, unavailable: !project.project_id }"
-              :title="$t('history.graphBuild')"
-            >◇</span>
-            <span 
-              class="status-icon available" 
-              :title="$t('history.envSetup')"
-            >◈</span>
-            <span 
-              class="status-icon" 
-              :class="{ available: project.report_id, unavailable: !project.report_id }"
-              :title="$t('history.analysisReport')"
-            >◆</span>
+          <div class="card-header-actions">
+            <div class="card-status-icons">
+              <span 
+                class="status-icon" 
+                :class="{ available: project.project_id, unavailable: !project.project_id }"
+                :title="$t('history.graphBuild')"
+              >◇</span>
+              <span 
+                class="status-icon available" 
+                :title="$t('history.envSetup')"
+              >◈</span>
+              <span 
+                class="status-icon" 
+                :class="{ available: project.report_id, unavailable: !project.report_id }"
+                :title="$t('history.analysisReport')"
+              >◆</span>
+            </div>
+            <button
+              class="card-delete-btn"
+              :disabled="deletingId === project.simulation_id"
+              :title="$t('history.deleteSimulation')"
+              @click.stop="handleDelete(project)"
+            >
+              {{ deletingId === project.simulation_id ? $t('history.deleting') : $t('history.deleteSimulation') }}
+            </button>
           </div>
         </div>
 
@@ -205,7 +216,7 @@
 import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getSimulationHistory } from '../api/simulation'
+import { getSimulationHistory, deleteSimulation } from '../api/simulation'
 import { importReportPackage } from '../api/report'
 
 const router = useRouter()
@@ -222,6 +233,8 @@ const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
 const importInput = ref(null)
 const importing = ref(false)
 const importError = ref('')
+const deletingId = ref('')
+const deleteError = ref('')
 let observer = null
 let isAnimating = false  // 动画锁，防止闪烁
 let expandDebounceTimer = null  // 防抖定时器
@@ -446,6 +459,27 @@ const handleImport = async (event) => {
   } finally {
     importing.value = false
     event.target.value = ''
+  }
+}
+
+const handleDelete = async (project) => {
+  if (!project?.simulation_id) return
+  if (!window.confirm(t('history.deleteConfirm'))) return
+
+  deletingId.value = project.simulation_id
+  deleteError.value = ''
+  try {
+    await deleteSimulation(project.simulation_id)
+    projects.value = projects.value.filter(
+      (item) => item.simulation_id !== project.simulation_id
+    )
+    if (selectedProject.value?.simulation_id === project.simulation_id) {
+      selectedProject.value = null
+    }
+  } catch (error) {
+    deleteError.value = error.message || t('history.deleteFailed')
+  } finally {
+    deletingId.value = ''
   }
 }
 
@@ -787,11 +821,40 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* 功能状态图标组 */
 .card-status-icons {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.card-delete-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid #E5E7EB;
+  border-radius: 3px;
+  background: transparent;
+  color: #9CA3AF;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.card-delete-btn:hover:not(:disabled) {
+  border-color: #B91C1C;
+  color: #B91C1C;
+}
+
+.card-delete-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .status-icon {

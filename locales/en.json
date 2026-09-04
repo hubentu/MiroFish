@@ -327,7 +327,11 @@
     "unknownFile": "Unknown file",
     "importReport": "Import report",
     "importingReport": "Importing...",
-    "importFailed": "Report import failed"
+    "importFailed": "Report import failed",
+    "deleteSimulation": "Delete",
+    "deleteConfirm": "Delete this simulation and its report from history?",
+    "deleteFailed": "Delete failed",
+    "deleting": "Deleting..."
   },
   "api": {
     "projectNotFound": "Project not found: {id}",

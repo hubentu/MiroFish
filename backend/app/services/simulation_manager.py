@@ -479,6 +479,16 @@ class SimulationManager:
     def get_simulation(self, simulation_id: str) -> Optional[SimulationState]:
         """获取模拟状态"""
         return self._load_simulation_state(simulation_id)
+
+    def delete_simulation(self, simulation_id: str) -> bool:
+        """Delete simulation directory and drop in-memory cache. Does not create the dir."""
+        sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
+        self._simulations.pop(simulation_id, None)
+        if not os.path.isdir(sim_dir):
+            return False
+        shutil.rmtree(sim_dir)
+        logger.info(f"Deleted simulation: {simulation_id}")
+        return True
     
     def list_simulations(self, project_id: Optional[str] = None) -> List[SimulationState]:
         """列出所有模拟"""

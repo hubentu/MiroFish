@@ -823,6 +823,55 @@ def get_simulation(simulation_id: str):
         }), 500
 
 
+@simulation_bp.route('/<simulation_id>', methods=['DELETE'])
+def delete_simulation(simulation_id: str):
+    """Delete a simulation and all reports attached to it (history card cleanup)."""
+    try:
+        from ..services.report_agent import ReportManager
+        from ..services.simulation_runner import SimulationRunner
+
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": t('api.simulationNotFound', id=simulation_id)
+            }), 404
+
+        # Best-effort stop so IPC files under the dir are not mid-write.
+        try:
+            if SimulationRunner.check_env_alive(simulation_id):
+                SimulationRunner.stop_simulation(simulation_id)
+        except Exception as stop_err:
+            logger.warning(f"stop before delete failed for {simulation_id}: {stop_err}")
+
+        deleted_reports = []
+        for report in ReportManager.list_reports(simulation_id=simulation_id, limit=100):
+            if ReportManager.delete_report(report.report_id):
+                deleted_reports.append(report.report_id)
+
+        if not manager.delete_simulation(simulation_id):
+            return jsonify({
+                "success": False,
+                "error": t('api.simulationNotFound', id=simulation_id)
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "simulation_id": simulation_id,
+                "deleted_reports": deleted_reports,
+            }
+        })
+    except Exception as e:
+        logger.error(f"删除模拟失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
 @simulation_bp.route('/list', methods=['GET'])
 def list_simulations():
     """

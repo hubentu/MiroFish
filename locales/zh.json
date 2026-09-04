@@ -327,7 +327,11 @@
     "unknownFile": "未知文件",
     "importReport": "导入报告",
     "importingReport": "正在导入...",
-    "importFailed": "报告导入失败"
+    "importFailed": "报告导入失败",
+    "deleteSimulation": "删除",
+    "deleteConfirm": "确定删除这条推演记录及其报告？",
+    "deleteFailed": "删除失败",
+    "deleting": "删除中..."
   },
   "api": {
     "projectNotFound": "项目不存在: {id}",
