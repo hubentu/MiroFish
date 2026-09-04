@@ -164,15 +164,57 @@ class GraphitiBackend:
         return bool(nodes)
 
     def hydrate_graph_snapshot(self, graph_id: str, snapshot: dict) -> None:
-        if not self.graph_exists(graph_id):
-            self.create_graph(graph_id, graph_id)
         driver = getattr(self.client, "driver", None)
         if driver is None:
             raise RuntimeError("Graphiti client has no graph driver")
 
+        snapshot_nodes = list(snapshot.get("nodes", []))
+        snapshot_edges = list(snapshot.get("edges", []))
+        node_uuids = {node["uuid"] for node in snapshot_nodes}
+        bad_edge_uuids = [
+            edge["uuid"]
+            for edge in snapshot_edges
+            if edge["source_node_uuid"] not in node_uuids
+            or edge["target_node_uuid"] not in node_uuids
+        ]
+        if bad_edge_uuids:
+            raise ValueError(
+                "Edges reference missing snapshot nodes: "
+                + ", ".join(map(str, bad_edge_uuids))
+            )
+
+        # ponytail: Preserve exported UUIDs and fail on cross-graph collisions;
+        # remapping would require rewriting references outside this snapshot too.
+        collision_result = run_sync(
+            driver.execute_query(
+                """
+                UNWIND $node_uuids AS node_uuid
+                MATCH (n:Entity {uuid: node_uuid})
+                WHERE coalesce(n.group_id, '') <> $graph_id
+                RETURN collect(DISTINCT node_uuid) AS collisions
+                """,
+                node_uuids=list(node_uuids),
+                graph_id=graph_id,
+            )
+        )
+        records = (
+            collision_result.records
+            if hasattr(collision_result, "records")
+            else collision_result[0]
+        )
+        collisions = list(records[0]["collisions"]) if records else []
+        if collisions:
+            raise ValueError(
+                "Node UUIDs already belong to another graph: "
+                + ", ".join(map(str, collisions))
+            )
+
+        if not self.graph_exists(graph_id):
+            self.create_graph(graph_id, graph_id)
+
         imported_at = datetime.now(timezone.utc).isoformat()
         nodes = []
-        for node in snapshot.get("nodes", []):
+        for node in snapshot_nodes:
             properties = {
                 **dict(node.get("attributes", {})),
                 "uuid": node["uuid"],
@@ -191,7 +233,7 @@ class GraphitiBackend:
             )
 
         edges = []
-        for edge in snapshot.get("edges", []):
+        for edge in snapshot_edges:
             properties = {
                 **dict(edge.get("attributes", {})),
                 "uuid": edge["uuid"],
@@ -218,11 +260,15 @@ class GraphitiBackend:
             driver.execute_query(
                 """
                 UNWIND $nodes AS node
-                MERGE (n:Entity {uuid: node.properties.uuid})
+                MERGE (n:Entity {
+                    uuid: node.properties.uuid,
+                    group_id: $graph_id
+                })
                 SET n:$(node.labels)
                 SET n = node.properties
                 """,
                 nodes=nodes,
+                graph_id=graph_id,
             )
         )
         run_sync(

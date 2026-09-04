@@ -39,10 +39,25 @@ class FakeKnowledgeGraphBackend:
         return graph_id in self._graphs
 
     def hydrate_graph_snapshot(self, graph_id: str, snapshot: dict) -> None:
+        nodes = list(snapshot.get("nodes", []))
+        edges = list(snapshot.get("edges", []))
+        node_uuids = {node["uuid"] for node in nodes}
+        bad_edge_uuids = [
+            edge["uuid"]
+            for edge in edges
+            if edge["source_node_uuid"] not in node_uuids
+            or edge["target_node_uuid"] not in node_uuids
+        ]
+        if bad_edge_uuids:
+            raise ValueError(
+                "Edges reference missing snapshot nodes: "
+                + ", ".join(map(str, bad_edge_uuids))
+            )
+
         if not self.graph_exists(graph_id):
             self.create_graph(graph_id, graph_id)
         graph = self._graphs[graph_id]
-        for node in snapshot.get("nodes", []):
+        for node in nodes:
             graph["nodes"][node["uuid"]] = GraphNode(
                 uuid=node["uuid"],
                 name=node.get("name", ""),
@@ -52,7 +67,7 @@ class FakeKnowledgeGraphBackend:
                 group_id=graph_id,
                 created_at=node.get("created_at"),
             )
-        for edge in snapshot.get("edges", []):
+        for edge in edges:
             graph["edges"][edge["uuid"]] = GraphEdge(
                 uuid=edge["uuid"],
                 name=edge.get("name", ""),
