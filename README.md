@@ -180,13 +180,23 @@ npm run frontend  # Start frontend only
 # 1. Configure environment variables (same as source deployment)
 cp .env.example .env
 
+# For Docker Compose, set NEO4J_URI=bolt://neo4j:7687 in .env (service name, not localhost)
+
 # 2. Pull image and start
 docker compose up -d
 ```
 
-Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 (backend)`
+Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 (backend)`. Default `docker compose up` starts Neo4j and MiroFish together (MiroFish waits for Neo4j healthcheck).
 
 > Mirror address for faster pulling is provided as comments in `docker-compose.yml`, replace if needed.
+
+## Transfer a report to another instance
+
+1. Source instance Step 5 → **Export** (one `.mirofish.zip`, graph included).
+2. Viewer: configure `.env` (LLM + `NEO4J_PASSWORD`), then `docker compose up -d`.
+3. Home → **Import report** → select the zip.
+4. Step 5 → **Start world** (required for individual chat / survey).
+5. Report Agent works after import; live agent tools work after the world is running.
 
 ## 📬 Join the Conversation
 

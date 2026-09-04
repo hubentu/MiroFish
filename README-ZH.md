@@ -180,13 +180,23 @@ npm run frontend  # 仅启动前端
 # 1. 配置环境变量（同源码部署）
 cp .env.example .env
 
+# Docker Compose 部署时，请在 .env 中设置 NEO4J_URI=bolt://neo4j:7687（服务名，非 localhost）
+
 # 2. 拉取镜像并启动
 docker compose up -d
 ```
 
-默认会读取根目录下的 `.env`，并映射端口 `3000（前端）/5001（后端）`
+默认会读取根目录下的 `.env`，并映射端口 `3000（前端）/5001（后端）`。默认 `docker compose up` 会同时启动 Neo4j 与 MiroFish（MiroFish 等待 Neo4j 健康检查通过）。
 
 > 在 `docker-compose.yml` 中已通过注释提供加速镜像地址，可按需替换
+
+## 将报告迁移到另一台实例
+
+1. 源实例 Step 5 → **Export**（单个 `.mirofish.zip`，含图谱）。
+2. 查看端：配置 `.env`（LLM + `NEO4J_PASSWORD`），然后 `docker compose up -d`。
+3. 首页 → **Import report** → 选择 zip。
+4. Step 5 → **Start world**（个体对话 / 问卷需先启动世界）。
+5. 导入后 Report Agent 可用；世界运行后 live agent 工具可用。
 
 ## 📬 更多交流
 
