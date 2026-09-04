@@ -180,7 +180,7 @@ npm run frontend  # 仅启动前端
 # 1. 配置环境变量（同源码部署）
 cp .env.example .env
 
-# Docker Compose 部署时，请在 .env 中设置 NEO4J_URI=bolt://neo4j:7687（服务名，非 localhost）
+# Compose 会覆盖 NEO4J_URI 为 bolt://neo4j:7687，无需手动修改；只需配置 LLM 与 NEO4J_PASSWORD
 
 # 2. 拉取镜像并启动
 docker compose up -d

@@ -180,7 +180,7 @@ npm run frontend  # Start frontend only
 # 1. Configure environment variables (same as source deployment)
 cp .env.example .env
 
-# For Docker Compose, set NEO4J_URI=bolt://neo4j:7687 in .env (service name, not localhost)
+# Compose overrides NEO4J_URI to bolt://neo4j:7687 — no manual change needed; set LLM keys + NEO4J_PASSWORD only
 
 # 2. Pull image and start
 docker compose up -d
