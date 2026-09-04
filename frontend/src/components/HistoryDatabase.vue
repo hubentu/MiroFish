@@ -67,7 +67,7 @@
               :title="$t('history.deleteSimulation')"
               @click.stop="handleDelete(project)"
             >
-              {{ deletingId === project.simulation_id ? $t('history.deleting') : $t('history.deleteSimulation') }}
+              ×
             </button>
           </div>
         </div>
@@ -836,25 +836,28 @@ onUnmounted(() => {
 
 .card-delete-btn {
   flex-shrink: 0;
-  padding: 2px 8px;
-  border: 1px solid #E5E7EB;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 3px;
   background: transparent;
   color: #9CA3AF;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.65rem;
-  letter-spacing: 0.02em;
+  font-size: 1rem;
+  line-height: 1;
   cursor: pointer;
 }
 
 .card-delete-btn:hover:not(:disabled) {
-  border-color: #B91C1C;
+  border-color: #FECACA;
   color: #B91C1C;
+  background: #FEF2F2;
 }
 
 .card-delete-btn:disabled {
   cursor: wait;
-  opacity: 0.6;
+  opacity: 0.45;
 }
 
 .status-icon {
