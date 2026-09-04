@@ -38,6 +38,36 @@ class FakeKnowledgeGraphBackend:
     def graph_exists(self, graph_id: str) -> bool:
         return graph_id in self._graphs
 
+    def hydrate_graph_snapshot(self, graph_id: str, snapshot: dict) -> None:
+        if not self.graph_exists(graph_id):
+            self.create_graph(graph_id, graph_id)
+        graph = self._graphs[graph_id]
+        for node in snapshot.get("nodes", []):
+            graph["nodes"][node["uuid"]] = GraphNode(
+                uuid=node["uuid"],
+                name=node.get("name", ""),
+                labels=list(node.get("labels", [])),
+                summary=node.get("summary", ""),
+                attributes=dict(node.get("attributes", {})),
+                group_id=graph_id,
+                created_at=node.get("created_at"),
+            )
+        for edge in snapshot.get("edges", []):
+            graph["edges"][edge["uuid"]] = GraphEdge(
+                uuid=edge["uuid"],
+                name=edge.get("name", ""),
+                fact=edge.get("fact", ""),
+                source_node_uuid=edge["source_node_uuid"],
+                target_node_uuid=edge["target_node_uuid"],
+                created_at=edge.get("created_at"),
+                valid_at=edge.get("valid_at"),
+                invalid_at=edge.get("invalid_at"),
+                expired_at=edge.get("expired_at"),
+                attributes=dict(edge.get("attributes", {})),
+                group_id=graph_id,
+                episodes=list(edge.get("episodes", [])),
+            )
+
     def set_ontology(self, graph_id: str, ontology: dict[str, Any]) -> None:
         self._graphs[graph_id]["ontology"] = ontology
 

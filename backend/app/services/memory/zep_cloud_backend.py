@@ -126,6 +126,11 @@ class ZepCloudBackend:
         except NotFoundError:
             return False
 
+    def hydrate_graph_snapshot(self, graph_id: str, snapshot: dict) -> None:
+        raise NotImplementedError(
+            "Report transfer hydrate requires MEMORY_BACKEND=graphiti"
+        )
+
     def set_ontology(self, graph_id: str, ontology: dict[str, Any]) -> None:
         # Zep SDK requires Field(default=None); suppress the pydantic warning.
         warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")

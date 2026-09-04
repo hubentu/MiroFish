@@ -163,6 +163,88 @@ class GraphitiBackend:
         nodes = run_sync(EntityNode.get_by_group_ids(driver, [graph_id], limit=1))
         return bool(nodes)
 
+    def hydrate_graph_snapshot(self, graph_id: str, snapshot: dict) -> None:
+        if not self.graph_exists(graph_id):
+            self.create_graph(graph_id, graph_id)
+        driver = getattr(self.client, "driver", None)
+        if driver is None:
+            raise RuntimeError("Graphiti client has no graph driver")
+
+        imported_at = datetime.now(timezone.utc).isoformat()
+        nodes = []
+        for node in snapshot.get("nodes", []):
+            properties = {
+                **dict(node.get("attributes", {})),
+                "uuid": node["uuid"],
+                "name": node.get("name", ""),
+                "group_id": graph_id,
+                "summary": node.get("summary", ""),
+                "created_at": node.get("created_at") or imported_at,
+            }
+            nodes.append(
+                {
+                    "labels": list(
+                        dict.fromkeys(["Entity", *node.get("labels", [])])
+                    ),
+                    "properties": properties,
+                }
+            )
+
+        edges = []
+        for edge in snapshot.get("edges", []):
+            properties = {
+                **dict(edge.get("attributes", {})),
+                "uuid": edge["uuid"],
+                "name": edge.get("name", ""),
+                "fact": edge.get("fact", ""),
+                "source_node_uuid": edge["source_node_uuid"],
+                "target_node_uuid": edge["target_node_uuid"],
+                "group_id": graph_id,
+                "created_at": edge.get("created_at") or imported_at,
+                "valid_at": edge.get("valid_at"),
+                "invalid_at": edge.get("invalid_at"),
+                "expired_at": edge.get("expired_at"),
+                "episodes": list(edge.get("episodes", [])),
+            }
+            edges.append(
+                {
+                    "source_node_uuid": edge["source_node_uuid"],
+                    "target_node_uuid": edge["target_node_uuid"],
+                    "properties": properties,
+                }
+            )
+
+        run_sync(
+            driver.execute_query(
+                """
+                UNWIND $nodes AS node
+                MERGE (n:Entity {uuid: node.properties.uuid})
+                SET n:$(node.labels)
+                SET n = node.properties
+                """,
+                nodes=nodes,
+            )
+        )
+        run_sync(
+            driver.execute_query(
+                """
+                UNWIND $edges AS edge
+                MATCH (source:Entity {
+                    uuid: edge.source_node_uuid, group_id: $graph_id
+                })
+                MATCH (target:Entity {
+                    uuid: edge.target_node_uuid, group_id: $graph_id
+                })
+                MERGE (source)-[relationship:RELATES_TO {
+                    uuid: edge.properties.uuid
+                }]->(target)
+                SET relationship = edge.properties
+                """,
+                edges=edges,
+                graph_id=graph_id,
+            )
+        )
+
     def set_ontology(self, graph_id: str, ontology: dict[str, Any]) -> None:
         self._entity_types[graph_id] = map_entity_types(ontology)
         if graph_id in self._graphs:
