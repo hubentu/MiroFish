@@ -659,6 +659,9 @@ class SimulationRunner:
         if process is not None and process.poll() is None:
             raise ValueError(f"模拟环境已在运行: {simulation_id}")
 
+        if cls.check_env_alive(simulation_id):
+            raise ValueError(f"模拟环境已在运行: {simulation_id}")
+
         return cls.start_simulation(
             simulation_id=simulation_id,
             platform=platform,

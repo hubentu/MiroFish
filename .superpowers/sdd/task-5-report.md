@@ -51,3 +51,22 @@ The failing test also reproduces alone and is outside this task.
 
 Not run: it requires an exported/imported world plus a live OASIS worker and
 LLM configuration. The subprocess spawn is mocked in unit tests as required.
+
+## Fix: refuse resume when IPC env alive after Flask restart
+
+Review finding: `resume_for_interview()` only checked the in-memory
+`_processes` map, so a Flask restart could spawn a second OASIS worker while
+IPC was still alive from the previous process.
+
+Change: call `SimulationRunner.check_env_alive()` (wraps
+`SimulationIPCClient(sim_dir).check_env_alive()`) before spawning; raise
+`ValueError("模拟环境已在运行: …")` when true.
+
+Test: `test_resume_for_interview_refuses_when_ipc_env_alive` mocks
+`check_env_alive` → `True`, asserts `ValueError` and no `Popen`.
+
+```text
+cd backend && python -m pytest tests/test_resume_world.py -v
+5 collected: 4 passed (including new test), 1 pre-existing fail
+(test_interview_only_opens_existing_db — missing camel in this env)
+```
