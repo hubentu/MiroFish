@@ -182,13 +182,15 @@ cp .env.example .env
 
 # Compose overrides NEO4J_URI to bolt://neo4j:7687 — no manual change needed; set LLM keys + NEO4J_PASSWORD only
 
-# 2. Pull image and start
+# 2. Pull this fork's image and start (built from `dev` → ghcr.io/hubentu/mirofish:dev)
 docker compose up -d
 ```
 
 Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 (backend)`. Default `docker compose up` starts Neo4j and MiroFish together (MiroFish waits for Neo4j healthcheck).
 
-> Mirror address for faster pulling is provided as comments in `docker-compose.yml`, replace if needed.
+Image: [`ghcr.io/hubentu/mirofish:dev`](https://github.com/hubentu/MiroFish/pkgs/container/mirofish) (published on every push to `dev`). Override with `MIROFISH_IMAGE=...` if needed. To build locally instead, set `build: .` under the `mirofish` service in `docker-compose.yml`.
+
+If the first `docker compose pull` fails with unauthorized, make the GHCR package public: GitHub → Packages → mirofish → Package settings → Change visibility.
 
 ## Transfer a report to another instance
 

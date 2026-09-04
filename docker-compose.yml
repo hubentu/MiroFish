@@ -16,9 +16,10 @@ services:
       retries: 10
 
   mirofish:
-    image: ghcr.io/666ghj/mirofish:latest
-    # 加速镜像（如拉取缓慢可替换上方地址）
-    # image: ghcr.nju.edu.cn/666ghj/mirofish:latest
+    # Published from this fork's `dev` branch via GitHub Actions → GHCR
+    image: ${MIROFISH_IMAGE:-ghcr.io/hubentu/mirofish:dev}
+    # Local build instead of pull:
+    # build: .
     container_name: mirofish
     env_file:
       - .env
