@@ -196,9 +196,9 @@
                 @click="goToReport"
                 :disabled="!selectedProject.report_id"
               >
-                <span class="btn-step">Step4</span>
+                <span class="btn-step">{{ selectedProject.report_status && selectedProject.report_status !== 'completed' ? 'Step4' : 'Step5' }}</span>
                 <span class="btn-icon">◆</span>
-                <span class="btn-text">{{ $t('history.step4Button') }}</span>
+                <span class="btn-text">{{ selectedProject.report_status && selectedProject.report_status !== 'completed' ? $t('history.step4Button') : $t('history.step5Button') }}</span>
               </button>
             </div>
             <!-- 不可回放提示 -->
@@ -505,15 +505,30 @@ const goToSimulation = () => {
   }
 }
 
-// 导航到分析报告页面（Report）
+// 已完成报告 → Step5 Interaction；生成中 → Step4 Report
 const goToReport = () => {
-  if (selectedProject.value?.report_id) {
+  const project = selectedProject.value
+  if (!project?.report_id) return
+
+  const generating =
+    project.report_status && project.report_status !== 'completed'
+
+  if (generating) {
     router.push({
       name: 'Report',
-      params: { reportId: selectedProject.value.report_id }
+      params: { reportId: project.report_id }
     })
-    closeModal()
+  } else {
+    router.push({
+      name: 'Interaction',
+      params: { reportId: project.report_id },
+      query: {
+        simulationId: project.simulation_id,
+        live_world: String(project.live_world === true)
+      }
+    })
   }
+  closeModal()
 }
 
 // 加载历史项目
