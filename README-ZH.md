@@ -203,6 +203,8 @@ docker compose up -d
 
 映射端口 `3000`（前端）/`5001`（后端），同时启动 Neo4j 与 MiroFish（等待 Neo4j 健康检查）。数据保存在 `./backend/uploads`。
 
+远程访问请打开 `http://<主机IP>:3000`（不要直连 `:5001`）。前端通过同源 `/api`（Vite 代理）访问后端，同一网络下其他人可与主机共用已导入的报告。
+
 可用 `MIROFISH_IMAGE=...` 覆盖镜像。若要本地构建，在 `docker-compose.yml` 的 `mirofish` 服务下改用 `build: .`。
 
 若首次 pull 提示未授权，请将 GHCR 包设为公开：GitHub → Packages → mirofish → Package settings → Change visibility。

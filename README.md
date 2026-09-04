@@ -203,6 +203,8 @@ docker compose up -d
 
 Maps ports `3000` (frontend) / `5001` (backend). Starts Neo4j + MiroFish (Mirofish waits for Neo4j healthcheck). Data persists under `./backend/uploads`.
 
+Remote viewers should open `http://<host-ip>:3000` (not `:5001`). The UI uses same-origin `/api` via the Vite proxy, so others on the network can import/view the same reports as the host.
+
 Override image with `MIROFISH_IMAGE=...` if needed. To build locally, set `build: .` under the `mirofish` service in `docker-compose.yml`.
 
 If the first pull fails with unauthorized, make the GHCR package public: GitHub → Packages → mirofish → Package settings → Change visibility.

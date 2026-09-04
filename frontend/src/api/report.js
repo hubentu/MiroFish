@@ -64,7 +64,7 @@ export const chatWithReport = (data) => {
  * @param {string} reportId
  */
 export const exportReportPackage = async (reportId) => {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001'
+  const baseURL = import.meta.env.VITE_API_BASE_URL ?? ''
   const response = await fetch(`${baseURL}/api/report/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
