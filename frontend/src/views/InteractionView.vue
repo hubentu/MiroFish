@@ -23,6 +23,16 @@
       <div class="header-right">
         <LanguageSwitcher />
         <div class="step-divider"></div>
+        <button
+          v-if="liveWorldCapable && simulationId && !envAlive"
+          class="start-world-btn"
+          :disabled="isStartingWorld"
+          @click="startWorld"
+        >
+          {{ isStartingWorld ? $t('step5.startingWorld') : $t('step5.startWorld') }}
+        </button>
+        <span v-if="worldError" class="world-error" :title="worldError">{{ worldError }}</span>
+        <div v-if="liveWorldCapable && simulationId && !envAlive" class="step-divider"></div>
         <div class="workflow-step">
           <span class="step-num">Step 5/5</span>
           <span class="step-name">{{ $tm('main.stepNames')[4] }}</span>
@@ -54,6 +64,8 @@
         <Step5Interaction
           :reportId="currentReportId"
           :simulationId="simulationId"
+          :envAlive="envAlive"
+          :liveWorld="liveWorldCapable"
           :systemLogs="systemLogs"
           @add-log="addLog"
           @update-status="updateStatus"
@@ -64,13 +76,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
 import { getProject, getGraphData } from '../api/graph'
-import { getSimulation } from '../api/simulation'
+import { getEnvStatus, getSimulation, resumeWorld } from '../api/simulation'
 import { getReport } from '../api/report'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 
@@ -88,12 +100,17 @@ const viewMode = ref('workbench')
 
 // Data State
 const currentReportId = ref(route.params.reportId)
-const simulationId = ref(null)
+const simulationId = ref(typeof route.query.simulationId === 'string' ? route.query.simulationId : null)
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('ready') // ready | processing | completed | error
+const envAlive = ref(false)
+const isStartingWorld = ref(false)
+const worldError = ref('')
+const liveWorldCapable = computed(() => route.query.live_world !== 'false')
+let unmounted = false
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -133,6 +150,37 @@ const updateStatus = (status) => {
   currentStatus.value = status
 }
 
+const checkEnvironment = async () => {
+  if (!simulationId.value) return false
+  const response = await getEnvStatus({ simulation_id: simulationId.value })
+  envAlive.value = response.success && response.data?.env_alive === true
+  return envAlive.value
+}
+
+const startWorld = async () => {
+  if (!simulationId.value || isStartingWorld.value) return
+
+  isStartingWorld.value = true
+  worldError.value = ''
+  updateStatus('processing')
+  try {
+    await resumeWorld(simulationId.value)
+    for (let attempt = 0; attempt < 30 && !unmounted; attempt++) {
+      if (await checkEnvironment()) {
+        updateStatus('ready')
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    throw new Error(t('step5.worldStartTimeout'))
+  } catch (error) {
+    worldError.value = error.message
+    updateStatus('error')
+  } finally {
+    isStartingWorld.value = false
+  }
+}
+
 // --- Layout Methods ---
 const toggleMaximize = (target) => {
   if (viewMode.value === target) {
@@ -154,6 +202,11 @@ const loadReportData = async () => {
       simulationId.value = reportData.simulation_id
 
       if (simulationId.value) {
+        try {
+          await checkEnvironment()
+        } catch {
+          envAlive.value = false
+        }
         // 获取 simulation 信息
         const simRes = await getSimulation(simulationId.value)
         if (simRes.success && simRes.data) {
@@ -214,7 +267,10 @@ watch(() => route.params.reportId, (newId) => {
 
 onMounted(() => {
   addLog(t('log.interactionViewInit'))
-  loadReportData()
+})
+
+onUnmounted(() => {
+  unmounted = true
 })
 </script>
 
@@ -285,6 +341,31 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.start-world-btn {
+  padding: 7px 12px;
+  border: 1px solid #111827;
+  border-radius: 4px;
+  background: #111827;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.start-world-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.world-error {
+  max-width: 220px;
+  overflow: hidden;
+  color: #B91C1C;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-step {

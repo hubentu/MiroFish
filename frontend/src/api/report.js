@@ -49,3 +49,34 @@ export const getReport = (reportId) => {
 export const chatWithReport = (data) => {
   return service.post('/api/report/chat', data)
 }
+
+/**
+ * 导出可转移的报告包。
+ * Blob 响应绕过只处理 JSON 的 axios 响应拦截器。
+ * @param {string} reportId
+ */
+export const exportReportPackage = async (reportId) => {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001'
+  const response = await fetch(`${baseURL}/api/report/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ report_id: reportId })
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.error || error.message || `Export failed (${response.status})`)
+  }
+
+  return response.blob()
+}
+
+/**
+ * 导入可转移的报告包。
+ * @param {File} file
+ */
+export const importReportPackage = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return service.post('/api/report/import', form)
+}

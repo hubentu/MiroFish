@@ -282,7 +282,15 @@
     "errorOccurred": "抱歉，发生了错误: {error}",
     "noResponse": "无响应",
     "requestFailed": "请求失败",
-    "selectAgentFirst": "请先选择一个模拟个体"
+    "selectAgentFirst": "请先选择一个模拟个体",
+    "exportReport": "导出",
+    "exporting": "正在导出...",
+    "exportFailed": "导出失败：{error}",
+    "startWorld": "启动世界",
+    "startingWorld": "正在启动世界...",
+    "worldStopped": "启动世界后可与个体对话和发送问卷；Report Agent 始终可用。",
+    "liveWorldUnavailable": "此报告包不包含可启动的世界，仅 Report Agent 可用。",
+    "worldStartTimeout": "世界未能及时就绪"
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",
@@ -316,7 +324,10 @@
     "notStarted": "未开始",
     "roundsProgress": "{current}/{total} 轮",
     "untitledSimulation": "未命名模拟",
-    "unknownFile": "未知文件"
+    "unknownFile": "未知文件",
+    "importReport": "导入报告",
+    "importingReport": "正在导入...",
+    "importFailed": "报告导入失败"
   },
   "api": {
     "projectNotFound": "项目不存在: {id}",

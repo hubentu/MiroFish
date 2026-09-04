@@ -90,6 +90,14 @@
           </div>
         </div>
           <div class="action-bar-tabs">
+            <button
+              v-if="reportCompleted"
+              class="tab-pill export-pill"
+              :disabled="isExporting"
+              @click="exportReport"
+            >
+              {{ isExporting ? $t('step5.exporting') : $t('step5.exportReport') }}
+            </button>
             <button 
               class="tab-pill"
               :class="{ active: activeTab === 'chat' && chatTarget === 'report_agent' }"
@@ -104,6 +112,7 @@
               <button 
                 class="tab-pill agent-pill"
                 :class="{ active: activeTab === 'chat' && chatTarget === 'agent' }"
+                :disabled="!worldToolsEnabled"
                 @click="toggleAgentDropdown"
               >
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -135,6 +144,7 @@
             <button
               class="tab-pill survey-pill"
               :class="{ active: activeTab === 'survey' }"
+              :disabled="!worldToolsEnabled"
               @click="selectSurveyTab"
             >
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -145,6 +155,8 @@
             </button>
           </div>
         </div>
+        <div v-if="!liveWorld" class="world-notice">{{ $t('step5.liveWorldUnavailable') }}</div>
+        <div v-else-if="!envAlive" class="world-notice">{{ $t('step5.worldStopped') }}</div>
 
         <!-- Chat Mode -->
         <div v-if="activeTab === 'chat'" class="chat-container">
@@ -294,14 +306,14 @@
               class="chat-input"
               :placeholder="$t('step5.chatInputPlaceholder')"
               @keydown.enter.exact.prevent="sendMessage"
-              :disabled="isSending || (!selectedAgent && chatTarget === 'agent')"
+              :disabled="isSending || (!selectedAgent && chatTarget === 'agent') || (chatTarget === 'agent' && !worldToolsEnabled)"
               rows="1"
               ref="chatInputRef"
             ></textarea>
             <button 
               class="send-btn"
               @click="sendMessage"
-              :disabled="!chatInput.trim() || isSending || (!selectedAgent && chatTarget === 'agent')"
+              :disabled="!chatInput.trim() || isSending || (!selectedAgent && chatTarget === 'agent') || (chatTarget === 'agent' && !worldToolsEnabled)"
             >
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -330,6 +342,7 @@
                   <input 
                     type="checkbox" 
                     :checked="selectedAgents.has(idx)"
+                    :disabled="!worldToolsEnabled"
                     @change="toggleAgentSelection(idx)"
                   >
                   <div class="checkbox-avatar">{{ (agent.username || 'A')[0] }}</div>
@@ -359,13 +372,14 @@
                 v-model="surveyQuestion"
                 class="survey-input"
                 :placeholder="$t('step5.surveyInputPlaceholder')"
+                :disabled="!worldToolsEnabled"
                 rows="3"
               ></textarea>
             </div>
 
             <button 
               class="survey-submit-btn"
-              :disabled="selectedAgents.size === 0 || !surveyQuestion.trim() || isSurveying"
+              :disabled="selectedAgents.size === 0 || !surveyQuestion.trim() || isSurveying || !worldToolsEnabled"
               @click="submitSurvey"
             >
               <span v-if="isSurveying" class="loading-spinner"></span>
@@ -413,14 +427,22 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { chatWithReport, getReport, getAgentLog } from '../api/report'
+import { chatWithReport, exportReportPackage, getReport, getAgentLog } from '../api/report'
 import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
 
 const { t } = useI18n()
 
 const props = defineProps({
   reportId: String,
-  simulationId: String
+  simulationId: String,
+  envAlive: {
+    type: Boolean,
+    default: false
+  },
+  liveWorld: {
+    type: Boolean,
+    default: true
+  }
 })
 
 const emit = defineEmits(['add-log', 'update-status'])
@@ -454,6 +476,9 @@ const generatedSections = ref({})
 const collapsedSections = ref(new Set())
 const currentSectionIndex = ref(null)
 const profiles = ref([])
+const reportCompleted = ref(false)
+const isExporting = ref(false)
+const worldToolsEnabled = computed(() => props.liveWorld && props.envAlive)
 
 // Helper Methods
 const isSectionCompleted = (sectionIndex) => {
@@ -513,6 +538,7 @@ const selectReportAgentChat = () => {
 }
 
 const selectSurveyTab = () => {
+  if (!worldToolsEnabled.value) return
   activeTab.value = 'survey'
   selectedAgent.value = null
   selectedAgentIndex.value = null
@@ -520,6 +546,7 @@ const selectSurveyTab = () => {
 }
 
 const toggleAgentDropdown = () => {
+  if (!worldToolsEnabled.value) return
   showAgentDropdown.value = !showAgentDropdown.value
   if (showAgentDropdown.value) {
     activeTab.value = 'chat'
@@ -528,6 +555,7 @@ const toggleAgentDropdown = () => {
 }
 
 const selectAgent = (agent, idx) => {
+  if (!worldToolsEnabled.value) return
   // 保存当前对话记录
   saveChatHistory()
   
@@ -710,6 +738,9 @@ const sendToReportAgent = async (message) => {
 }
 
 const sendToAgent = async (message) => {
+  if (!worldToolsEnabled.value) {
+    throw new Error(t('step5.worldStopped'))
+  }
   if (!selectedAgent.value || selectedAgentIndex.value === null) {
     throw new Error(t('step5.selectAgentFirst'))
   }
@@ -783,6 +814,7 @@ const scrollToBottom = () => {
 
 // Survey Methods
 const toggleAgentSelection = (idx) => {
+  if (!worldToolsEnabled.value) return
   const newSet = new Set(selectedAgents.value)
   if (newSet.has(idx)) {
     newSet.delete(idx)
@@ -793,6 +825,7 @@ const toggleAgentSelection = (idx) => {
 }
 
 const selectAllAgents = () => {
+  if (!worldToolsEnabled.value) return
   const newSet = new Set()
   profiles.value.forEach((_, idx) => newSet.add(idx))
   selectedAgents.value = newSet
@@ -803,7 +836,7 @@ const clearAgentSelection = () => {
 }
 
 const submitSurvey = async () => {
-  if (selectedAgents.value.size === 0 || !surveyQuestion.value.trim()) return
+  if (!worldToolsEnabled.value || selectedAgents.value.size === 0 || !surveyQuestion.value.trim()) return
   
   isSurveying.value = true
   addLog(t('log.sendSurvey', { count: selectedAgents.value.size }))
@@ -881,11 +914,33 @@ const loadReportData = async () => {
     // Get report info
     const reportRes = await getReport(props.reportId)
     if (reportRes.success && reportRes.data) {
+      reportCompleted.value = reportRes.data.status === 'completed'
       // Load agent logs to get report outline and sections
       await loadAgentLogs()
     }
   } catch (err) {
     addLog(t('log.loadReportFailed', { error: err.message }))
+  }
+}
+
+const exportReport = async () => {
+  if (!props.reportId || isExporting.value) return
+
+  isExporting.value = true
+  try {
+    const blob = await exportReportPackage(props.reportId)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `mirofish_${props.reportId}.mirofish.zip`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    addLog(t('step5.exportFailed', { error: error.message }))
+  } finally {
+    isExporting.value = false
   }
 }
 
@@ -1364,6 +1419,14 @@ watch(() => props.simulationId, (newId) => {
   justify-content: flex-end;
 }
 
+.world-notice {
+  padding: 9px 20px;
+  border-bottom: 1px solid #FDE68A;
+  background: #FFFBEB;
+  color: #92400E;
+  font-size: 12px;
+}
+
 .tab-pill {
   display: flex;
   align-items: center;
@@ -1383,6 +1446,11 @@ watch(() => props.simulationId, (newId) => {
 .tab-pill:hover {
   background: #E5E7EB;
   color: #374151;
+}
+
+.tab-pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .tab-pill.active {
@@ -1434,6 +1502,12 @@ watch(() => props.simulationId, (newId) => {
   background: #047857;
   color: #FFFFFF;
   box-shadow: 0 2px 8px rgba(4, 120, 87, 0.2);
+}
+
+.export-pill {
+  border-color: #D1D5DB;
+  background: #FFFFFF;
+  color: #374151;
 }
 
 /* Interaction Header */

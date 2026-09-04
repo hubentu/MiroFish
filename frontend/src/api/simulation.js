@@ -171,6 +171,14 @@ export const getEnvStatus = (data) => {
 }
 
 /**
+ * 恢复导入的模拟世界，用于实时采访。
+ * @param {string} simulationId
+ */
+export const resumeWorld = (simulationId) => {
+  return service.post('/api/simulation/resume-world', { simulation_id: simulationId })
+}
+
+/**
  * 批量采访 Agent
  * @param {Object} data - { simulation_id, interviews: [{ agent_id, prompt }] }
  */

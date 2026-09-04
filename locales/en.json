@@ -282,7 +282,15 @@
     "errorOccurred": "Sorry, an error occurred: {error}",
     "noResponse": "No response",
     "requestFailed": "Request failed",
-    "selectAgentFirst": "Please select a simulated individual first"
+    "selectAgentFirst": "Please select a simulated individual first",
+    "exportReport": "Export",
+    "exporting": "Exporting...",
+    "exportFailed": "Export failed: {error}",
+    "startWorld": "Start world",
+    "startingWorld": "Starting world...",
+    "worldStopped": "Start the world to chat with individuals and send surveys. Report Agent remains available.",
+    "liveWorldUnavailable": "This package does not include a live world. Only Report Agent is available.",
+    "worldStartTimeout": "The world did not become ready in time"
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",
@@ -316,7 +324,10 @@
     "notStarted": "Not started",
     "roundsProgress": "{current}/{total} rounds",
     "untitledSimulation": "Untitled simulation",
-    "unknownFile": "Unknown file"
+    "unknownFile": "Unknown file",
+    "importReport": "Import report",
+    "importingReport": "Importing...",
+    "importFailed": "Report import failed"
   },
   "api": {
     "projectNotFound": "Project not found: {id}",

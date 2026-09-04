@@ -14,8 +14,19 @@
     <div class="section-header">
       <div class="section-line"></div>
       <span class="section-title">{{ $t('history.title') }}</span>
+      <button class="import-btn" :disabled="importing" @click="importInput?.click()">
+        {{ importing ? $t('history.importingReport') : $t('history.importReport') }}
+      </button>
+      <input
+        ref="importInput"
+        class="import-input"
+        type="file"
+        accept=".zip,.mirofish.zip"
+        @change="handleImport"
+      >
       <div class="section-line"></div>
     </div>
+    <div v-if="importError" class="import-error">{{ importError }}</div>
 
     <!-- 卡片容器（只在有项目时显示） -->
     <div v-if="projects.length > 0" class="cards-container" :class="{ expanded: isExpanded }" :style="containerStyle">
@@ -195,6 +206,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory } from '../api/simulation'
+import { importReportPackage } from '../api/report'
 
 const router = useRouter()
 const route = useRoute()
@@ -207,6 +219,9 @@ const isExpanded = ref(false)
 const hoveringCard = ref(null)
 const historyContainer = ref(null)
 const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
+const importInput = ref(null)
+const importing = ref(false)
+const importError = ref('')
 let observer = null
 let isAnimating = false  // 动画锁，防止闪烁
 let expandDebounceTimer = null  // 防抖定时器
@@ -407,6 +422,31 @@ const navigateToProject = (simulation) => {
 // 关闭弹窗
 const closeModal = () => {
   selectedProject.value = null
+}
+
+const handleImport = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  importing.value = true
+  importError.value = ''
+  try {
+    const response = await importReportPackage(file)
+    const data = response.data
+    await router.push({
+      name: 'Interaction',
+      params: { reportId: data.report_id },
+      query: {
+        simulationId: data.simulation_id,
+        live_world: String(data.capabilities?.live_world === true)
+      }
+    })
+  } catch (error) {
+    importError.value = error.message || t('history.importFailed')
+  } finally {
+    importing.value = false
+    event.target.value = ''
+  }
 }
 
 // 导航到图谱构建页面（Project）
@@ -657,6 +697,42 @@ onUnmounted(() => {
   color: #9CA3AF;
   letter-spacing: 3px;
   text-transform: uppercase;
+}
+
+.import-btn {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  background: #FFFFFF;
+  color: #4B5563;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.import-btn:hover:not(:disabled) {
+  border-color: #111827;
+  color: #111827;
+}
+
+.import-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.import-input {
+  display: none;
+}
+
+.import-error {
+  position: relative;
+  z-index: 100;
+  margin: -12px auto 16px;
+  max-width: 640px;
+  color: #B91C1C;
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 /* 卡片容器 */
