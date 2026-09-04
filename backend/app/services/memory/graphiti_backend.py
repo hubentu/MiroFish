@@ -92,20 +92,28 @@ class GraphitiBackend:
         if client is not None:
             self.client = client
         else:
-            self.client = self._build_client()
+            # Build on the shared Graphiti loop so Neo4j async driver binds there.
+            async def _create():
+                return self._build_client()
+
+            self.client = run_sync(_create())
 
     def _build_client(self) -> Any:
         from graphiti_core import Graphiti
+        from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
         from graphiti_core.llm_client.config import LLMConfig
         from graphiti_core.llm_client.openai_client import OpenAIClient
 
         if not Config.NEO4J_PASSWORD:
             raise ValueError("NEO4J_PASSWORD is required for GraphitiBackend")
+        if not Config.LLM_API_KEY:
+            raise ValueError("LLM_API_KEY is required for GraphitiBackend")
 
         llm_config = LLMConfig(
             api_key=Config.LLM_API_KEY,
             model=Config.LLM_MODEL_NAME,
+            small_model=Config.LLM_MODEL_NAME,
             base_url=Config.LLM_BASE_URL,
         )
         llm_client = OpenAIClient(config=llm_config)
@@ -120,12 +128,17 @@ class GraphitiBackend:
             embedder_kwargs["embedding_dim"] = int(Config.GRAPHITI_EMBEDDING_DIM)
         embedder = OpenAIEmbedder(config=OpenAIEmbedderConfig(**embedder_kwargs))
 
+        # Graphiti defaults cross_encoder to OpenAIRerankerClient() with no key,
+        # which then requires OPENAI_API_KEY. Pass our LLM config explicitly.
+        cross_encoder = OpenAIRerankerClient(config=llm_config)
+
         return Graphiti(
             Config.NEO4J_URI,
             Config.NEO4J_USER,
             Config.NEO4J_PASSWORD,
             llm_client=llm_client,
             embedder=embedder,
+            cross_encoder=cross_encoder,
         )
 
     def _ensure_indices(self) -> None:

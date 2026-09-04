@@ -643,15 +643,24 @@ const formatActionTime = (timestamp) => {
   }
 }
 
-const waitForTerminalRunStatus = async (timeoutMs = 180000) => {
+const waitForTerminalRunStatus = async (timeoutMs = 900000) => {
   const terminal = new Set(['completed', 'stopped', 'failed'])
   const started = Date.now()
+  let lastLogAt = 0
   while (Date.now() - started < timeoutMs) {
     const res = await getRunStatus(props.simulationId)
     if (res.success && res.data) {
       runStatus.value = res.data
       if (terminal.has(res.data.runner_status)) {
         return res.data
+      }
+      const now = Date.now()
+      if (now - lastLogAt > 15000) {
+        lastLogAt = now
+        addLog(t('log.waitingGraphDrain', {
+          status: res.data.runner_status,
+          elapsed: Math.round((now - started) / 1000)
+        }))
       }
     }
     await new Promise((r) => setTimeout(r, 2000))
@@ -756,11 +765,7 @@ onMounted(async () => {
         startDetailPolling()
         return
       }
-      // idle after a prior run: do not auto-start (avoids wiping a just-stopped sim)
-      if (status === 'idle') {
-        phase.value = 0
-        return
-      }
+      // idle / unknown: fall through to start (stopped/completed/failed already returned)
     }
   } catch (err) {
     console.warn('Failed to resume simulation status:', err)

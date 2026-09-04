@@ -324,12 +324,30 @@ class ZepGraphMemoryUpdater:
     
     def stop(self):
         """Drain the worker, flush tail events, and wait for Cloud ingestion."""
-        deadline = time.time() + ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        soft_graphiti = (Config.MEMORY_BACKEND or "").strip().lower() == "graphiti"
         # Serialize the accepting->closed transition with add_activity's
         # check+enqueue operation. This closes the small race where a producer
         # could enqueue after both the worker and final flush had exited.
         with self._acceptance_lock:
             self._running = False
+
+        # ponytail: Graphiti add_episode is sequential (~5–15s/item); full drain
+        # can take hours and is held under the simulation finalization lock.
+        # Detach immediately so stop/report are not blocked; daemon finishes
+        # what it can in the background (report may see a partial graph).
+        if soft_graphiti:
+            alive = bool(self._worker_thread and self._worker_thread.is_alive())
+            logger.warning(
+                "Detaching Graphiti updater immediately "
+                "(worker_alive=%s, activities=%s, sent_batches=%s, graph_id=%s)",
+                alive,
+                self._total_activities,
+                self._total_sent,
+                self.graph_id,
+            )
+            return
+
+        deadline = time.time() + ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
 
         if self._worker_thread and self._worker_thread.is_alive():
             join_timeout = max(0.0, deadline - time.time())

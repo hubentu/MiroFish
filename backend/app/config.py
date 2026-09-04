@@ -36,16 +36,24 @@ class Config:
     NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
     NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
     NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD")
-    GRAPHITI_EMBEDDING_MODEL = os.environ.get("GRAPHITI_EMBEDDING_MODEL")
-    GRAPHITI_EMBEDDING_DIM = os.environ.get("GRAPHITI_EMBEDDING_DIM")
-    GRAPHITI_EMBEDDING_BASE_URL = os.environ.get("GRAPHITI_EMBEDDING_BASE_URL")
-    GRAPHITI_EMBEDDING_API_KEY = os.environ.get("GRAPHITI_EMBEDDING_API_KEY")
+    GRAPHITI_EMBEDDING_MODEL = (
+        os.environ.get("GRAPHITI_EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL")
+    )
+    GRAPHITI_EMBEDDING_DIM = (
+        os.environ.get("GRAPHITI_EMBEDDING_DIM") or os.environ.get("EMBEDDING_DIM")
+    )
+    GRAPHITI_EMBEDDING_BASE_URL = (
+        os.environ.get("GRAPHITI_EMBEDDING_BASE_URL") or os.environ.get("EMBEDDING_BASE")
+    )
+    GRAPHITI_EMBEDDING_API_KEY = (
+        os.environ.get("GRAPHITI_EMBEDDING_API_KEY") or os.environ.get("EMBEDDING_KEY")
+    )
 
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
     
     # 文件上传配置
-    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
+    MAX_CONTENT_LENGTH = 128 * 1024 * 1024  # transfer bundles are ~100MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
     

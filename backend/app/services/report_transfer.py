@@ -14,12 +14,10 @@ FORMAT_VERSION = 1
 _SIM_FILES = (
     "state.json",
     "simulation_config.json",
-    "env_status.json",
     "reddit_profiles.json",
     "twitter_profiles.csv",
     "reddit_simulation.db",
     "twitter_simulation.db",
-    "run_state.json",
 )
 _REPORT_FILES = ("meta.json", "outline.json", "full_report.md")
 
@@ -168,6 +166,10 @@ def unpack_and_validate(zip_path: Path, work_dir: Path) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as zf:
         _safe_extract(zf, work_dir)
+
+    # Imported process state can only describe the source host.
+    for stale_state in ("env_status.json", "run_state.json"):
+        (work_dir / "simulation" / stale_state).unlink(missing_ok=True)
 
     manifest_path = work_dir / "manifest.json"
     if not manifest_path.is_file():

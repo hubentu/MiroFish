@@ -198,6 +198,8 @@ Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 
 4. Step 5 → **Start world** (required for individual chat / survey).
 5. Report Agent works after import; live agent tools work after the world is running.
 
+Hydrated graphs use keyword/full-text search; vector embeddings are not transferred.
+
 ## 📬 Join the Conversation
 
 <div align="center">

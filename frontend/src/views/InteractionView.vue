@@ -276,6 +276,7 @@ watch(() => route.params.reportId, (newId) => {
 
 onMounted(() => {
   addLog(t('log.interactionViewInit'))
+  loadReportData()
 })
 
 onUnmounted(() => {

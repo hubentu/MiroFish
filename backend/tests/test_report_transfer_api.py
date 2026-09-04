@@ -84,6 +84,15 @@ def test_export_requires_report_id(client):
     assert response.json["success"] is False
 
 
+def test_export_missing_report_returns_404(client):
+    response = client.post(
+        "/api/report/export", json={"report_id": "report_missing"}
+    )
+
+    assert response.status_code == 404
+    assert response.json["success"] is False
+
+
 def test_export_downloads_bundle_with_graph(client, tmp_path, monkeypatch):
     _plant_export_tree(tmp_path)
     graph_data = {
@@ -115,6 +124,22 @@ def test_export_downloads_bundle_with_graph(client, tmp_path, monkeypatch):
     with zipfile.ZipFile(io.BytesIO(response.data)) as bundle:
         assert "graph/graph.json" in bundle.namelist()
         assert json.loads(bundle.read("graph/graph.json")) == graph_data
+
+
+def test_export_graph_load_exception_returns_500(client, tmp_path, monkeypatch):
+    _plant_export_tree(tmp_path)
+    builder = MagicMock()
+    builder.get_graph_data.side_effect = RuntimeError("graph offline")
+    monkeypatch.setattr(
+        report_api, "GraphBuilderService", lambda: builder, raising=False
+    )
+
+    response = client.post(
+        "/api/report/export", json={"report_id": "report_export"}
+    )
+
+    assert response.status_code == 500
+    assert response.json["success"] is False
 
 
 def test_export_rejects_empty_graph(client, tmp_path, monkeypatch):
@@ -236,6 +261,10 @@ def test_import_writes_uploads_and_hydrates(client, tmp_path, monkeypatch):
     assert (uploads / "exports" / f'{data["graph_id"]}.json').is_file()
     assert data["capabilities"] == {"report_agent": True, "live_world": False}
     assert report["capabilities"] == {"report_agent": True, "live_world": False}
+    assert SimulationRunner.check_env_alive(data["simulation_id"]) is False
+    assert not (
+        uploads / "simulations" / data["simulation_id"] / "run_state.json"
+    ).exists()
 
 
 def test_import_rolls_back_uploads_when_hydrate_fails(

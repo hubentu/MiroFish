@@ -125,3 +125,42 @@ def test_map_entity_types_sanitizes_reserved_attributes():
     assert "uuid" not in fields
     assert "entity_uuid" in fields
     assert "role" in fields
+
+
+def test_build_client_passes_cross_encoder_with_llm_key(monkeypatch):
+    """Graphiti's default reranker needs OPENAI_API_KEY unless we pass config."""
+    from app.config import Config
+
+    monkeypatch.setattr(Config, "NEO4J_PASSWORD", "secret")
+    monkeypatch.setattr(Config, "NEO4J_URI", "bolt://localhost:7687")
+    monkeypatch.setattr(Config, "NEO4J_USER", "neo4j")
+    monkeypatch.setattr(Config, "LLM_API_KEY", "test-llm-key")
+    monkeypatch.setattr(Config, "LLM_BASE_URL", "https://example.com/v1")
+    monkeypatch.setattr(Config, "LLM_MODEL_NAME", "test-model")
+    monkeypatch.setattr(Config, "GRAPHITI_EMBEDDING_API_KEY", None)
+    monkeypatch.setattr(Config, "GRAPHITI_EMBEDDING_BASE_URL", None)
+    monkeypatch.setattr(Config, "GRAPHITI_EMBEDDING_MODEL", None)
+    monkeypatch.setattr(Config, "GRAPHITI_EMBEDDING_DIM", None)
+
+    captured: dict = {}
+
+    def fake_graphiti(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return MagicMock()
+
+    with (
+        patch("graphiti_core.Graphiti", side_effect=fake_graphiti),
+        patch("graphiti_core.llm_client.openai_client.OpenAIClient") as mock_llm,
+        patch("graphiti_core.embedder.openai.OpenAIEmbedder") as mock_emb,
+        patch(
+            "graphiti_core.cross_encoder.openai_reranker_client.OpenAIRerankerClient"
+        ) as mock_rerank,
+    ):
+        GraphitiBackend()  # builds real client path
+
+    assert "cross_encoder" in captured["kwargs"]
+    mock_rerank.assert_called_once()
+    rerank_config = mock_rerank.call_args.kwargs.get("config") or mock_rerank.call_args.args[0]
+    assert rerank_config.api_key == "test-llm-key"
+    mock_llm.assert_called_once()
+    mock_emb.assert_called_once()

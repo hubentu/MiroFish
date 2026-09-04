@@ -552,6 +552,7 @@
     "simFailed": "✗ Simulation failed",
     "reportRequestSent": "Report generation request sent, please wait...",
     "startingReportGen": "Starting report generation...",
+    "waitingGraphDrain": "Writing simulation memory to graph (status: {status}, waited {elapsed}s)...",
     "reportGenTaskStarted": "✓ Report generation task started: {reportId}",
     "reportGenFailed": "✗ Failed to start report generation: {error}",
     "reportGenException": "✗ Report generation error: {error}",

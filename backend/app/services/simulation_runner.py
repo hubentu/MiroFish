@@ -1091,6 +1091,41 @@ class SimulationRunner:
                     RunnerStatus.FAILED,
                 }
             )
+            # Stuck STOPPING/FAILED with no live updater (e.g. after server
+            # reload mid-drain): treat as recoverable and finish as STOPPED.
+            if (
+                pending_updater is None
+                and state.runner_status in {
+                    RunnerStatus.STOPPING,
+                    RunnerStatus.FAILED,
+                }
+                and cls._processes.get(simulation_id) is None
+            ):
+                state.runner_status = RunnerStatus.STOPPED
+                state.twitter_running = False
+                state.reddit_running = False
+                state.completed_at = state.completed_at or datetime.now().isoformat()
+                # Keep prior drain warning if any; clear hard failure only when empty.
+                if state.error and "未完整完成" in state.error:
+                    state.error = (
+                        "Graph memory drain was interrupted; report may use a "
+                        "partial graph. Original: " + state.error
+                    )
+                cls._save_run_state(state)
+                cls._sync_simulation_status(
+                    simulation_id,
+                    RunnerStatus.STOPPED,
+                    state.error,
+                )
+                cls._graph_memory_enabled.pop(simulation_id, None)
+                cls._manual_stop_requests.discard(simulation_id)
+                logger.warning(
+                    "Recovered orphaned %s simulation as STOPPED: %s",
+                    "stopping/failed",
+                    simulation_id,
+                )
+                return state
+
             if (
                 state.runner_status not in [
                     RunnerStatus.STARTING,
@@ -1135,20 +1170,13 @@ class SimulationRunner:
             and monitor is not threading.current_thread()
             and monitor.is_alive()
         ):
-            wait_timeout = max(
-                30.0,
-                ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
-                + ZEP_HTTP_REQUEST_TIMEOUT_SECONDS
-                + 5,
-            )
+            wait_timeout = 5.0
             monitor.join(timeout=wait_timeout)
             if monitor.is_alive():
-                # The monitor still owns finalization and may be inside one
-                # bounded HTTP request. Do not block on or overwrite its lock;
-                # leave the observable state as STOPPING and let polling expose
-                # the eventual STOPPED/FAILED result.
+                # ponytail: never block the HTTP stop request on the full graph
+                # drain (can be many minutes). Client should poll run-status.
                 raise SimulationStopPending(
-                    f"模拟仍在停止中，图谱写入未在 {wait_timeout:.0f}s 内完成"
+                    f"模拟仍在停止中，图谱写入进行中（请轮询状态）"
                 )
         else:
             # Restart recovery or tests may have no monitor thread. Complete

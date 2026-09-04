@@ -26,6 +26,11 @@ service.interceptors.request.use(
 service.interceptors.response.use(
   response => {
     const res = response.data
+
+    // Stop/finalize may return success:false + pending while graph drains.
+    if (res && res.pending) {
+      return res
+    }
     
     // 如果返回的状态码不是success，则抛出错误
     if (!res.success && res.success !== undefined) {
@@ -37,7 +42,12 @@ service.interceptors.response.use(
   },
   error => {
     console.error('Response error:', error)
-    const apiError = error.response?.data?.error || error.response?.data?.message
+    const data = error.response?.data
+    // 202 pending sometimes lands here depending on axios/validateStatus
+    if (data && data.pending) {
+      return data
+    }
+    const apiError = data?.error || data?.message
     
     // 处理超时
     if (error.code === 'ECONNABORTED' && error.message.includes('timeout')) {

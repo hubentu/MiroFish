@@ -12,6 +12,21 @@ def test_run_sync_returns_coroutine_result():
     assert run_sync(_add(2, 3)) == 5
 
 
+def test_run_sync_reuses_same_loop_across_calls():
+    """Neo4j/Graphiti need one stable loop — not a fresh asyncio.run() each time."""
+    loops: list[asyncio.AbstractEventLoop] = []
+
+    async def capture():
+        loops.append(asyncio.get_running_loop())
+        await asyncio.sleep(0)
+        return True
+
+    assert run_sync(capture()) is True
+    assert run_sync(capture()) is True
+    assert len(loops) == 2
+    assert loops[0] is loops[1]
+
+
 def test_factory_can_inject_override(monkeypatch):
     clear_memory_backend_cache()
     fake = FakeKnowledgeGraphBackend()
