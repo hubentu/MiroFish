@@ -136,6 +136,9 @@ def import_report_package():
         return jsonify({"success": False, "error": "file required"}), 400
 
     installed: list[Path] = []
+    backend = None
+    graph_id = None
+    hydration_started = False
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -158,6 +161,7 @@ def import_report_package():
             )
 
             new_ids = mint_ids()
+            graph_id = new_ids["graph_id"]
             project_data, sim_state, report_meta = remap_ids(
                 manifest, project_data, sim_state, report_meta, new_ids
             )
@@ -184,29 +188,50 @@ def import_report_package():
                 (package["simulation_dir"], Path(SimulationRunner.RUN_STATE_DIR) / new_ids["simulation_id"]),
                 (package["report_dir"], Path(ReportManager.REPORTS_DIR) / new_ids["report_id"]),
             )
-            for source, destination in destinations:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(source, destination)
-                installed.append(destination)
 
-            export_path = (
-                Path(Config.UPLOAD_FOLDER) / "exports" / f'{new_ids["graph_id"]}.json'
-            )
-            export_path.parent.mkdir(parents=True, exist_ok=True)
-            export_path.write_text(
-                json.dumps(graph_snapshot, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            installed.append(export_path)
+            upload_root = Path(Config.UPLOAD_FOLDER)
+            upload_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix=".report-import-", dir=upload_root
+            ) as staging_dir:
+                staging_root = Path(staging_dir)
+                staged_dirs = []
+                for index, (source, destination) in enumerate(destinations):
+                    staged = staging_root / str(index)
+                    shutil.copytree(source, staged)
+                    staged_dirs.append((staged, destination))
 
-            try:
-                get_memory_backend().hydrate_graph_snapshot(
-                    new_ids["graph_id"], graph_snapshot
+                staged_export = staging_root / "graph.json"
+                staged_export.write_text(
+                    json.dumps(graph_snapshot, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
                 )
-            except Exception as exc:
-                # Preserve hydrate failures as server errors even when the
-                # backend reports them as ValueError or OSError.
-                raise RuntimeError(str(exc)) from exc
+
+                backend = get_memory_backend()
+                hydration_started = True
+                try:
+                    backend.hydrate_graph_snapshot(graph_id, graph_snapshot)
+                except Exception as exc:
+                    # Preserve hydrate failures as server errors even when the
+                    # backend reports them as ValueError or OSError.
+                    raise RuntimeError(str(exc)) from exc
+
+                for staged, destination in staged_dirs:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if destination.exists():
+                        raise FileExistsError(f"Import destination exists: {destination}")
+                    installed.append(destination)
+                    os.replace(staged, destination)
+
+                export_path = (
+                    upload_root / "exports" / f"{graph_id}.json"
+                )
+                export_path.parent.mkdir(parents=True, exist_ok=True)
+                if export_path.exists():
+                    raise FileExistsError(f"Import destination exists: {export_path}")
+                installed.append(export_path)
+                os.replace(staged_export, export_path)
+
             capabilities = {
                 "report_agent": True,
                 "live_world": detect_live_world_capability(
@@ -219,6 +244,11 @@ def import_report_package():
                 shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
             except OSError:
                 logger.exception("Failed to roll back imported path: %s", path)
+        if hydration_started and backend is not None and graph_id is not None:
+            try:
+                backend.delete_graph(graph_id)
+            except Exception:
+                logger.exception("Failed to roll back imported graph: %s", graph_id)
         return jsonify({"success": False, "error": f"Invalid report package: {exc}"}), 400
     except Exception as exc:
         for path in reversed(installed):
@@ -226,6 +256,11 @@ def import_report_package():
                 shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
             except OSError:
                 logger.exception("Failed to roll back imported path: %s", path)
+        if hydration_started and backend is not None and graph_id is not None:
+            try:
+                backend.delete_graph(graph_id)
+            except Exception:
+                logger.exception("Failed to roll back imported graph: %s", graph_id)
         logger.exception("Report graph hydration failed")
         return jsonify({"success": False, "error": f"Graph hydration failed: {exc}"}), 500
 

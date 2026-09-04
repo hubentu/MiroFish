@@ -241,13 +241,10 @@ def test_import_rolls_back_uploads_when_hydrate_fails(
     client, tmp_path, monkeypatch
 ):
     bundle = _build_transfer_bundle(tmp_path)
-
-    class FailingBackend:
-        def hydrate_graph_snapshot(self, graph_id, snapshot):
-            raise OSError("hydrate failed")
-
+    backend = MagicMock()
+    backend.hydrate_graph_snapshot.side_effect = OSError("hydrate failed")
     monkeypatch.setattr(
-        report_api, "get_memory_backend", lambda: FailingBackend(), raising=False
+        report_api, "get_memory_backend", lambda: backend, raising=False
     )
 
     with bundle.open("rb") as upload:
@@ -258,6 +255,42 @@ def test_import_rolls_back_uploads_when_hydrate_fails(
         )
 
     assert response.status_code == 500
+    graph_id = backend.hydrate_graph_snapshot.call_args.args[0]
+    backend.delete_graph.assert_called_once_with(graph_id)
+    uploads = tmp_path / "uploads"
+    for name in ("projects", "simulations", "reports", "exports"):
+        assert not list((uploads / name).glob("*"))
+
+
+def test_import_copy_failure_never_exposes_partial_uploads(
+    client, tmp_path, monkeypatch
+):
+    bundle = _build_transfer_bundle(tmp_path)
+    backend = MagicMock()
+    real_copytree = report_api.shutil.copytree
+    copies = 0
+
+    def fail_second_copy(source, destination):
+        nonlocal copies
+        copies += 1
+        if copies == 2:
+            raise OSError("copy failed")
+        return real_copytree(source, destination)
+
+    monkeypatch.setattr(report_api.shutil, "copytree", fail_second_copy)
+    monkeypatch.setattr(
+        report_api, "get_memory_backend", lambda: backend, raising=False
+    )
+
+    with bundle.open("rb") as upload:
+        response = client.post(
+            "/api/report/import",
+            data={"file": (upload, bundle.name)},
+            content_type="multipart/form-data",
+        )
+
+    assert response.status_code == 400
+    backend.hydrate_graph_snapshot.assert_not_called()
     uploads = tmp_path / "uploads"
     for name in ("projects", "simulations", "reports", "exports"):
         assert not list((uploads / name).glob("*"))
