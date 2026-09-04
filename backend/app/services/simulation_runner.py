@@ -1787,6 +1787,32 @@ class SimulationRunner:
         Returns:
             True 表示环境存活，False 表示环境已关闭
         """
+        # Process table is source of truth. env_status.json alone is stale after
+        # container/backend restart (file on volume still says "alive").
+        process = cls._processes.get(simulation_id)
+        process_alive = process is not None and process.poll() is None
+        if not process_alive:
+            sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
+            status_file = os.path.join(sim_dir, "env_status.json")
+            if os.path.isfile(status_file):
+                try:
+                    with open(status_file, "r", encoding="utf-8") as f:
+                        status = json.load(f)
+                    if status.get("status") == "alive":
+                        with open(status_file, "w", encoding="utf-8") as f:
+                            json.dump(
+                                {
+                                    "status": "stopped",
+                                    "timestamp": datetime.now().isoformat(),
+                                },
+                                f,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                except (json.JSONDecodeError, OSError):
+                    pass
+            return False
+
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         if not os.path.exists(sim_dir):
             return False
