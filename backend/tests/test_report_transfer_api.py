@@ -11,6 +11,9 @@ from app.api import report as report_api
 from app.config import Config
 from app.models.project import ProjectManager
 from app.services.report_agent import ReportManager
+from app.services.memory.fake_backend import FakeKnowledgeGraphBackend
+from app.services.report_transfer import pack_transfer_zip
+from app.services.simulation_manager import SimulationManager
 from app.services.simulation_runner import SimulationRunner
 
 
@@ -23,6 +26,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(Config, "UPLOAD_FOLDER", str(uploads))
     monkeypatch.setattr(ProjectManager, "PROJECTS_DIR", str(projects))
     monkeypatch.setattr(ReportManager, "REPORTS_DIR", str(reports))
+    monkeypatch.setattr(SimulationManager, "SIMULATION_DATA_DIR", str(simulations))
     monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(simulations))
 
     app = create_app()
@@ -135,3 +139,125 @@ def test_export_rejects_empty_graph(client, tmp_path, monkeypatch):
 
     assert response.status_code == 400
     assert "nodes" in response.json["error"]
+
+
+def _build_transfer_bundle(tmp_path: Path) -> Path:
+    source = tmp_path / "source"
+    project_dir = source / "project"
+    simulation_dir = source / "simulation"
+    report_dir = source / "report"
+    _write_json(
+        project_dir / "project.json",
+        {
+            "project_id": "proj_source",
+            "name": "Imported project",
+            "status": "created",
+            "graph_id": "mirofish_source",
+        },
+    )
+    _write_json(
+        simulation_dir / "state.json",
+        {
+            "simulation_id": "sim_source",
+            "project_id": "proj_source",
+            "graph_id": "mirofish_source",
+            "status": "created",
+        },
+    )
+    _write_json(simulation_dir / "simulation_config.json", {"max_rounds": 1})
+    _write_json(
+        report_dir / "meta.json",
+        {
+            "report_id": "report_source",
+            "simulation_id": "sim_source",
+            "graph_id": "mirofish_source",
+            "simulation_requirement": "Predict import behavior.",
+            "status": "pending",
+        },
+    )
+    (report_dir / "full_report.md").write_text("# Imported", encoding="utf-8")
+    bundle = tmp_path / "transfer.mirofish.zip"
+    pack_transfer_zip(
+        project_dir=project_dir,
+        simulation_dir=simulation_dir,
+        report_dir=report_dir,
+        graph_data={
+            "graph_id": "mirofish_source",
+            "nodes": [{"uuid": "node-1", "name": "Imported node"}],
+            "edges": [],
+        },
+        dest_zip=bundle,
+    )
+    return bundle
+
+
+def test_import_rejects_non_zip(client):
+    response = client.post(
+        "/api/report/import",
+        data={"file": (io.BytesIO(b"not-a-zip"), "x.txt")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert response.json["success"] is False
+
+
+def test_import_writes_uploads_and_hydrates(client, tmp_path, monkeypatch):
+    bundle = _build_transfer_bundle(tmp_path)
+    backend = FakeKnowledgeGraphBackend()
+    monkeypatch.setattr(report_api, "get_memory_backend", lambda: backend, raising=False)
+
+    with bundle.open("rb") as upload:
+        response = client.post(
+            "/api/report/import",
+            data={"file": (upload, bundle.name)},
+            content_type="multipart/form-data",
+        )
+
+    assert response.status_code == 200
+    data = response.json["data"]
+    uploads = tmp_path / "uploads"
+    project = json.loads(
+        (uploads / "projects" / data["project_id"] / "project.json").read_text()
+    )
+    state = json.loads(
+        (uploads / "simulations" / data["simulation_id"] / "state.json").read_text()
+    )
+    report = json.loads(
+        (uploads / "reports" / data["report_id"] / "meta.json").read_text()
+    )
+    assert project["status"] == "graph_completed"
+    assert state["status"] == "completed"
+    assert report["status"] == "completed"
+    assert project["graph_id"] == state["graph_id"] == report["graph_id"]
+    assert project["graph_id"] == data["graph_id"]
+    assert SimulationManager().get_simulation(data["simulation_id"]).status.value == "completed"
+    assert backend.list_nodes(data["graph_id"])[0].uuid == "node-1"
+    assert (uploads / "exports" / f'{data["graph_id"]}.json').is_file()
+    assert data["capabilities"] == {"report_agent": True, "live_world": False}
+
+
+def test_import_rolls_back_uploads_when_hydrate_fails(
+    client, tmp_path, monkeypatch
+):
+    bundle = _build_transfer_bundle(tmp_path)
+
+    class FailingBackend:
+        def hydrate_graph_snapshot(self, graph_id, snapshot):
+            raise OSError("hydrate failed")
+
+    monkeypatch.setattr(
+        report_api, "get_memory_backend", lambda: FailingBackend(), raising=False
+    )
+
+    with bundle.open("rb") as upload:
+        response = client.post(
+            "/api/report/import",
+            data={"file": (upload, bundle.name)},
+            content_type="multipart/form-data",
+        )
+
+    assert response.status_code == 500
+    uploads = tmp_path / "uploads"
+    for name in ("projects", "simulations", "reports", "exports"):
+        assert not list((uploads / name).glob("*"))

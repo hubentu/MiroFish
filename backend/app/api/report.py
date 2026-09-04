@@ -6,9 +6,11 @@ Report API路由
 import io
 import json
 import os
+import shutil
 import tempfile
 import traceback
 import threading
+import zipfile
 from pathlib import Path
 from flask import request, jsonify, send_file
 
@@ -16,7 +18,14 @@ from . import report_bp
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
 from ..services.graph_builder import GraphBuilderService
-from ..services.report_transfer import pack_transfer_zip
+from ..services.memory.factory import get_memory_backend
+from ..services.report_transfer import (
+    detect_live_world_capability,
+    mint_ids,
+    pack_transfer_zip,
+    remap_ids,
+    unpack_and_validate,
+)
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
@@ -117,6 +126,110 @@ def export_report_package():
         as_attachment=True,
         download_name=f"mirofish_{report_id}.mirofish.zip",
     )
+
+
+@report_bp.route('/import', methods=['POST'])
+def import_report_package():
+    """Install a report transfer bundle and hydrate its graph snapshot."""
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"success": False, "error": "file required"}), 400
+
+    installed: list[Path] = []
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            bundle_path = temp_root / "upload.zip"
+            upload.save(bundle_path)
+            package = unpack_and_validate(bundle_path, temp_root / "package")
+
+            manifest = package["manifest"]
+            project_data = json.loads(
+                (package["project_dir"] / "project.json").read_text(encoding="utf-8")
+            )
+            sim_state = json.loads(
+                (package["simulation_dir"] / "state.json").read_text(encoding="utf-8")
+            )
+            report_meta = json.loads(
+                (package["report_dir"] / "meta.json").read_text(encoding="utf-8")
+            )
+            graph_snapshot = json.loads(
+                package["graph_path"].read_text(encoding="utf-8")
+            )
+
+            new_ids = mint_ids()
+            project_data, sim_state, report_meta = remap_ids(
+                manifest, project_data, sim_state, report_meta, new_ids
+            )
+            project_data["status"] = ProjectStatus.GRAPH_COMPLETED.value
+            sim_state["status"] = "completed"
+            report_meta["status"] = ReportStatus.COMPLETED.value
+            graph_snapshot["graph_id"] = new_ids["graph_id"]
+
+            (package["project_dir"] / "project.json").write_text(
+                json.dumps(project_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (package["simulation_dir"] / "state.json").write_text(
+                json.dumps(sim_state, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (package["report_dir"] / "meta.json").write_text(
+                json.dumps(report_meta, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            destinations = (
+                (package["project_dir"], Path(ProjectManager.PROJECTS_DIR) / new_ids["project_id"]),
+                (package["simulation_dir"], Path(SimulationRunner.RUN_STATE_DIR) / new_ids["simulation_id"]),
+                (package["report_dir"], Path(ReportManager.REPORTS_DIR) / new_ids["report_id"]),
+            )
+            for source, destination in destinations:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source, destination)
+                installed.append(destination)
+
+            export_path = (
+                Path(Config.UPLOAD_FOLDER) / "exports" / f'{new_ids["graph_id"]}.json'
+            )
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            export_path.write_text(
+                json.dumps(graph_snapshot, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            installed.append(export_path)
+
+            try:
+                get_memory_backend().hydrate_graph_snapshot(
+                    new_ids["graph_id"], graph_snapshot
+                )
+            except Exception as exc:
+                # Preserve hydrate failures as server errors even when the
+                # backend reports them as ValueError or OSError.
+                raise RuntimeError(str(exc)) from exc
+            capabilities = {
+                "report_agent": True,
+                "live_world": detect_live_world_capability(
+                    Path(SimulationRunner.RUN_STATE_DIR) / new_ids["simulation_id"]
+                ),
+            }
+    except (zipfile.BadZipFile, ValueError, json.JSONDecodeError, KeyError, OSError) as exc:
+        for path in reversed(installed):
+            try:
+                shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Failed to roll back imported path: %s", path)
+        return jsonify({"success": False, "error": f"Invalid report package: {exc}"}), 400
+    except Exception as exc:
+        for path in reversed(installed):
+            try:
+                shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Failed to roll back imported path: %s", path)
+        logger.exception("Report graph hydration failed")
+        return jsonify({"success": False, "error": f"Graph hydration failed: {exc}"}), 500
+
+    return jsonify({"success": True, "data": {**new_ids, "capabilities": capabilities}})
 
 
 # ============== 报告生成接口 ==============
