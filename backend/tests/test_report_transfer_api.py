@@ -235,6 +235,7 @@ def test_import_writes_uploads_and_hydrates(client, tmp_path, monkeypatch):
     assert backend.list_nodes(data["graph_id"])[0].uuid == "node-1"
     assert (uploads / "exports" / f'{data["graph_id"]}.json').is_file()
     assert data["capabilities"] == {"report_agent": True, "live_world": False}
+    assert report["capabilities"] == {"report_agent": True, "live_world": False}
 
 
 def test_import_rolls_back_uploads_when_hydrate_fails(

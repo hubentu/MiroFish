@@ -109,7 +109,15 @@ const currentStatus = ref('ready') // ready | processing | completed | error
 const envAlive = ref(false)
 const isStartingWorld = ref(false)
 const worldError = ref('')
-const liveWorldCapable = computed(() => route.query.live_world !== 'false')
+const reportCapabilities = ref(null)
+const liveWorldCapable = computed(() => {
+  const fromMeta = reportCapabilities.value?.live_world
+  if (fromMeta === false) return false
+  if (fromMeta === true) return true
+  if (route.query.live_world === 'false') return false
+  if (route.query.live_world === 'true') return true
+  return true
+})
 let unmounted = false
 
 // --- Computed Layout Styles ---
@@ -199,6 +207,7 @@ const loadReportData = async () => {
     const reportRes = await getReport(currentReportId.value)
     if (reportRes.success && reportRes.data) {
       const reportData = reportRes.data
+      reportCapabilities.value = reportData.capabilities ?? null
       simulationId.value = reportData.simulation_id
 
       if (simulationId.value) {

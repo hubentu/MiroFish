@@ -169,6 +169,13 @@ def import_report_package():
             sim_state["status"] = "completed"
             report_meta["status"] = ReportStatus.COMPLETED.value
             graph_snapshot["graph_id"] = new_ids["graph_id"]
+            capabilities = {
+                "report_agent": True,
+                "live_world": detect_live_world_capability(
+                    package["simulation_dir"]
+                ),
+            }
+            report_meta["capabilities"] = capabilities
 
             (package["project_dir"] / "project.json").write_text(
                 json.dumps(project_data, ensure_ascii=False, indent=2),
@@ -232,12 +239,6 @@ def import_report_package():
                 installed.append(export_path)
                 os.replace(staged_export, export_path)
 
-            capabilities = {
-                "report_agent": True,
-                "live_world": detect_live_world_capability(
-                    Path(SimulationRunner.RUN_STATE_DIR) / new_ids["simulation_id"]
-                ),
-            }
     except (zipfile.BadZipFile, ValueError, json.JSONDecodeError, KeyError, OSError) as exc:
         for path in reversed(installed):
             try:
