@@ -14,6 +14,14 @@ const service = axios.create({
 service.interceptors.request.use(
   config => {
     config.headers['Accept-Language'] = i18n.global.locale.value
+    // Let the browser set multipart boundary; default application/json breaks file uploads
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      if (config.headers && typeof config.headers.delete === 'function') {
+        config.headers.delete('Content-Type')
+      } else if (config.headers) {
+        delete config.headers['Content-Type']
+      }
+    }
     return config
   },
   error => {

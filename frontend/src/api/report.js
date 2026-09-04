@@ -78,5 +78,6 @@ export const exportReportPackage = async (reportId) => {
 export const importReportPackage = (file) => {
   const form = new FormData()
   form.append('file', file)
+  // Content-Type left unset so axios interceptor + browser set multipart boundary
   return service.post('/api/report/import', form)
 }
