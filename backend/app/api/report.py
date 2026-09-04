@@ -3,14 +3,20 @@ Report API路由
 提供模拟报告生成、获取、对话等接口
 """
 
+import io
+import json
 import os
+import tempfile
 import traceback
 import threading
+from pathlib import Path
 from flask import request, jsonify, send_file
 
 from . import report_bp
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
+from ..services.graph_builder import GraphBuilderService
+from ..services.report_transfer import pack_transfer_zip
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
@@ -25,6 +31,92 @@ from ..utils.zep_lifecycle import (
 )
 
 logger = get_logger('mirofish.api.report')
+
+
+# ============== 报告转移接口 ==============
+
+@report_bp.route('/export', methods=['POST'])
+def export_report_package():
+    """Export a report, its simulation artifacts, and graph as one bundle."""
+    data = request.get_json(silent=True) or {}
+    report_id = data.get("report_id")
+    if not report_id:
+        return jsonify({"success": False, "error": "report_id required"}), 400
+
+    report = ReportManager.get_report(report_id)
+    if report is None:
+        return jsonify({
+            "success": False,
+            "error": f"Report not found: {report_id}",
+        }), 404
+
+    report_dir = Path(ReportManager.REPORTS_DIR) / report_id
+    simulation_dir = Path(SimulationRunner.RUN_STATE_DIR) / report.simulation_id
+    try:
+        simulation_state = json.loads(
+            (simulation_dir / "state.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        return jsonify({
+            "success": False,
+            "error": f"Simulation data unavailable: {exc}",
+        }), 400
+
+    project_id = simulation_state.get("project_id")
+    project = ProjectManager.get_project(project_id) if project_id else None
+    if project is None:
+        return jsonify({
+            "success": False,
+            "error": f"Project not found: {project_id or 'unknown'}",
+        }), 404
+
+    graph_id = (
+        report.graph_id
+        or simulation_state.get("graph_id")
+        or project.graph_id
+    )
+    if not graph_id:
+        return jsonify({"success": False, "error": "graph_id unavailable"}), 400
+
+    try:
+        graph_data = GraphBuilderService().get_graph_data(graph_id)
+    except Exception as exc:
+        logger.error("Export graph load failed: %s", exc)
+        return jsonify({
+            "success": False,
+            "error": f"Graph unavailable: {exc}",
+        }), 500
+    if not graph_data.get("nodes"):
+        return jsonify({
+            "success": False,
+            "error": "Graph nodes are required for export",
+        }), 400
+
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_path = Path(temp_dir) / f"mirofish_{report_id}.mirofish.zip"
+            pack_transfer_zip(
+                project_dir=Path(ProjectManager.PROJECTS_DIR) / project.project_id,
+                simulation_dir=simulation_dir,
+                report_dir=report_dir,
+                graph_data=graph_data,
+                dest_zip=bundle_path,
+            )
+            # ponytail: buffer one export in memory; stream a retained temp file
+            # if transfer bundles become large enough to pressure worker memory.
+            bundle = io.BytesIO(bundle_path.read_bytes())
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return jsonify({
+            "success": False,
+            "error": f"Report package unavailable: {exc}",
+        }), 400
+
+    return send_file(
+        bundle,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"mirofish_{report_id}.mirofish.zip",
+    )
 
 
 # ============== 报告生成接口 ==============
