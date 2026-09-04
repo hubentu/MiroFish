@@ -196,6 +196,8 @@ class GraphitiBackend:
         return bool(nodes)
 
     def hydrate_graph_snapshot(self, graph_id: str, snapshot: dict) -> None:
+        from uuid import uuid4
+
         driver = getattr(self.client, "driver", None)
         if driver is None:
             raise RuntimeError("Graphiti client has no graph driver")
@@ -215,31 +217,9 @@ class GraphitiBackend:
                 + ", ".join(map(str, bad_edge_uuids))
             )
 
-        # ponytail: Preserve exported UUIDs and fail on cross-graph collisions;
-        # remapping would require rewriting references outside this snapshot too.
-        collision_result = run_sync(
-            driver.execute_query(
-                """
-                UNWIND $node_uuids AS node_uuid
-                MATCH (n:Entity {uuid: node_uuid})
-                WHERE coalesce(n.group_id, '') <> $graph_id
-                RETURN collect(DISTINCT node_uuid) AS collisions
-                """,
-                node_uuids=list(node_uuids),
-                graph_id=graph_id,
-            )
-        )
-        records = (
-            collision_result.records
-            if hasattr(collision_result, "records")
-            else collision_result[0]
-        )
-        collisions = list(records[0]["collisions"]) if records else []
-        if collisions:
-            raise ValueError(
-                "Node UUIDs already belong to another graph: "
-                + ", ".join(map(str, collisions))
-            )
+        # Always mint fresh UUIDs so re-importing the same zip (new graph_id)
+        # cannot collide with a prior hydrate that kept source UUIDs.
+        node_uuid_map = {old: str(uuid4()) for old in node_uuids}
 
         if not self.graph_exists(graph_id):
             self.create_graph(graph_id, graph_id)
@@ -247,9 +227,10 @@ class GraphitiBackend:
         imported_at = datetime.now(timezone.utc)
         nodes = []
         for node in snapshot_nodes:
+            new_uuid = node_uuid_map[node["uuid"]]
             properties = {
                 **dict(node.get("attributes", {})),
-                "uuid": node["uuid"],
+                "uuid": new_uuid,
                 "name": node.get("name", ""),
                 "group_id": graph_id,
                 "summary": node.get("summary", ""),
@@ -266,13 +247,15 @@ class GraphitiBackend:
 
         edges = []
         for edge in snapshot_edges:
+            source = node_uuid_map[edge["source_node_uuid"]]
+            target = node_uuid_map[edge["target_node_uuid"]]
             properties = {
                 **dict(edge.get("attributes", {})),
-                "uuid": edge["uuid"],
+                "uuid": str(uuid4()),
                 "name": edge.get("name", ""),
                 "fact": edge.get("fact", ""),
-                "source_node_uuid": edge["source_node_uuid"],
-                "target_node_uuid": edge["target_node_uuid"],
+                "source_node_uuid": source,
+                "target_node_uuid": target,
                 "group_id": graph_id,
                 "created_at": _neo4j_dt(edge.get("created_at")) or imported_at,
                 "valid_at": _neo4j_dt(edge.get("valid_at")),
@@ -282,8 +265,8 @@ class GraphitiBackend:
             }
             edges.append(
                 {
-                    "source_node_uuid": edge["source_node_uuid"],
-                    "target_node_uuid": edge["target_node_uuid"],
+                    "source_node_uuid": source,
+                    "target_node_uuid": target,
                     "properties": properties,
                 }
             )

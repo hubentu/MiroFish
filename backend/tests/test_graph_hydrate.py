@@ -58,22 +58,49 @@ def test_fake_hydrate_rejects_missing_edge_endpoints_without_creating_graph():
     assert not backend.graph_exists("mirofish_invalid")
 
 
-def test_graphiti_hydrate_rejects_cross_graph_node_uuid_collision():
+def test_graphiti_hydrate_remaps_uuids_to_avoid_collisions():
+    """Re-importing the same zip must not fail on leftover source UUIDs."""
     driver = MagicMock()
     driver.execute_query = AsyncMock(
-        return_value=([{"collisions": ["shared-node"]}], None, None)
+        side_effect=[MagicMock(), MagicMock()]  # nodes MERGE, edges MERGE
     )
     client = MagicMock(driver=driver)
     backend = GraphitiBackend(client=client)
     backend._graphs["destination"] = {"name": "destination"}
 
-    with pytest.raises(ValueError, match="shared-node"):
-        backend.hydrate_graph_snapshot(
-            "destination",
-            {"nodes": [{"uuid": "shared-node"}], "edges": []},
-        )
+    backend.hydrate_graph_snapshot(
+        "destination",
+        {
+            "nodes": [
+                {"uuid": "shared-node", "name": "A", "labels": [], "attributes": {}},
+                {"uuid": "other-node", "name": "B", "labels": [], "attributes": {}},
+            ],
+            "edges": [
+                {
+                    "uuid": "e1",
+                    "name": "KNOWS",
+                    "fact": "A knows B",
+                    "source_node_uuid": "shared-node",
+                    "target_node_uuid": "other-node",
+                    "attributes": {},
+                    "episodes": [],
+                }
+            ],
+        },
+    )
 
-    assert driver.execute_query.await_count == 1
+    node_call = driver.execute_query.await_args_list[0]
+    props = [n["properties"] for n in node_call.kwargs["nodes"]]
+    written_uuids = {p["uuid"] for p in props}
+    assert "shared-node" not in written_uuids
+    assert "other-node" not in written_uuids
+    assert len(written_uuids) == 2
+
+    edge_call = driver.execute_query.await_args_list[1]
+    edge = edge_call.kwargs["edges"][0]
+    assert edge["source_node_uuid"] in written_uuids
+    assert edge["target_node_uuid"] in written_uuids
+    assert edge["properties"]["uuid"] != "e1"
 
 
 def test_graphiti_hydrate_writes_datetime_created_at():
@@ -83,7 +110,6 @@ def test_graphiti_hydrate_writes_datetime_created_at():
     driver = MagicMock()
     driver.execute_query = AsyncMock(
         side_effect=[
-            ([{"collisions": []}], None, None),  # collision check
             MagicMock(),  # nodes MERGE
             MagicMock(),  # edges MERGE
         ]
@@ -108,10 +134,11 @@ def test_graphiti_hydrate_writes_datetime_created_at():
         },
     )
 
-    node_call = driver.execute_query.await_args_list[1]
+    node_call = driver.execute_query.await_args_list[0]
     props = node_call.kwargs["nodes"][0]["properties"]
     assert isinstance(props["created_at"], datetime)
     assert props["created_at"].year == 2026
+    assert props["uuid"] != "n1"
 
 
 @pytest.mark.skipif(
@@ -155,7 +182,10 @@ def test_graphiti_hydrate_integration():
                 ],
             },
         )
-        assert {node.uuid for node in backend.list_nodes(graph_id)} == set(node_ids)
+        nodes = backend.list_nodes(graph_id)
+        assert {node.name for node in nodes} == {"Alice", "Bob"}
+        # UUIDs are remapped on hydrate
+        assert {node.uuid for node in nodes}.isdisjoint(set(node_ids))
         edges = backend.list_edges(graph_id)
         assert len(edges) == 1
         assert edges[0].group_id == graph_id
