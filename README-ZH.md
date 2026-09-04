@@ -176,21 +176,36 @@ npm run frontend  # 仅启动前端
 
 ### 二、Docker 部署
 
+镜像：[`ghcr.io/hubentu/mirofish:dev`](https://github.com/hubentu/MiroFish/pkgs/container/mirofish)（每次推送到 `dev` 自动发布）。**不需要**完整 git clone，只需 `docker-compose.yml` 和 `.env`。
+
+**最小部署（推荐用于查看端机器）：**
+
 ```bash
-# 1. 配置环境变量（同源码部署）
+mkdir mirofish && cd mirofish
+curl -fsSL -o docker-compose.yml \
+  https://raw.githubusercontent.com/hubentu/MiroFish/dev/docker-compose.yml
+curl -fsSL -o .env.example \
+  https://raw.githubusercontent.com/hubentu/MiroFish/dev/.env.example
 cp .env.example .env
+# 编辑 .env：填写 LLM_API_KEY、LLM_BASE_URL、LLM_MODEL_NAME、NEO4J_PASSWORD
+# Compose 会覆盖 NEO4J_URI 为 bolt://neo4j:7687，无需手动修改
 
-# Compose 会覆盖 NEO4J_URI 为 bolt://neo4j:7687，无需手动修改；只需配置 LLM 与 NEO4J_PASSWORD
-
-# 2. 拉取本 fork 的镜像并启动（由 `dev` 分支构建 → ghcr.io/hubentu/mirofish:dev）
+mkdir -p backend/uploads
 docker compose up -d
 ```
 
-默认会读取根目录下的 `.env`，并映射端口 `3000（前端）/5001（后端）`。默认 `docker compose up` 会同时启动 Neo4j 与 MiroFish（MiroFish 等待 Neo4j 健康检查通过）。
+**已有仓库时：**
 
-镜像：[`ghcr.io/hubentu/mirofish:dev`](https://github.com/hubentu/MiroFish/pkgs/container/mirofish)（每次推送到 `dev` 自动发布）。可用 `MIROFISH_IMAGE=...` 覆盖。若要本地构建，在 `docker-compose.yml` 的 `mirofish` 服务下改用 `build: .`。
+```bash
+cp .env.example .env   # 配置 LLM 与 NEO4J_PASSWORD
+docker compose up -d
+```
 
-若首次 `docker compose pull` 提示未授权，请将 GHCR 包设为公开：GitHub → Packages → mirofish → Package settings → Change visibility。
+映射端口 `3000`（前端）/`5001`（后端），同时启动 Neo4j 与 MiroFish（等待 Neo4j 健康检查）。数据保存在 `./backend/uploads`。
+
+可用 `MIROFISH_IMAGE=...` 覆盖镜像。若要本地构建，在 `docker-compose.yml` 的 `mirofish` 服务下改用 `build: .`。
+
+若首次 pull 提示未授权，请将 GHCR 包设为公开：GitHub → Packages → mirofish → Package settings → Change visibility。
 
 ## 将报告迁移到另一台实例
 

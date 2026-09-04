@@ -176,21 +176,36 @@ npm run frontend  # Start frontend only
 
 ### Option 2: Docker Deployment
 
+Image: [`ghcr.io/hubentu/mirofish:dev`](https://github.com/hubentu/MiroFish/pkgs/container/mirofish) (published on every push to `dev`). You do **not** need a full git clone — only `docker-compose.yml` and `.env`.
+
+**Minimal deploy (recommended for a viewer machine):**
+
 ```bash
-# 1. Configure environment variables (same as source deployment)
+mkdir mirofish && cd mirofish
+curl -fsSL -o docker-compose.yml \
+  https://raw.githubusercontent.com/hubentu/MiroFish/dev/docker-compose.yml
+curl -fsSL -o .env.example \
+  https://raw.githubusercontent.com/hubentu/MiroFish/dev/.env.example
 cp .env.example .env
+# Edit .env: set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME, NEO4J_PASSWORD
+# Compose overrides NEO4J_URI to bolt://neo4j:7687 — no manual change needed
 
-# Compose overrides NEO4J_URI to bolt://neo4j:7687 — no manual change needed; set LLM keys + NEO4J_PASSWORD only
-
-# 2. Pull this fork's image and start (built from `dev` → ghcr.io/hubentu/mirofish:dev)
+mkdir -p backend/uploads
 docker compose up -d
 ```
 
-Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 (backend)`. Default `docker compose up` starts Neo4j and MiroFish together (MiroFish waits for Neo4j healthcheck).
+**From a git checkout** (if you already have the repo):
 
-Image: [`ghcr.io/hubentu/mirofish:dev`](https://github.com/hubentu/MiroFish/pkgs/container/mirofish) (published on every push to `dev`). Override with `MIROFISH_IMAGE=...` if needed. To build locally instead, set `build: .` under the `mirofish` service in `docker-compose.yml`.
+```bash
+cp .env.example .env   # set LLM keys + NEO4J_PASSWORD
+docker compose up -d
+```
 
-If the first `docker compose pull` fails with unauthorized, make the GHCR package public: GitHub → Packages → mirofish → Package settings → Change visibility.
+Maps ports `3000` (frontend) / `5001` (backend). Starts Neo4j + MiroFish (Mirofish waits for Neo4j healthcheck). Data persists under `./backend/uploads`.
+
+Override image with `MIROFISH_IMAGE=...` if needed. To build locally, set `build: .` under the `mirofish` service in `docker-compose.yml`.
+
+If the first pull fails with unauthorized, make the GHCR package public: GitHub → Packages → mirofish → Package settings → Change visibility.
 
 ## Transfer a report to another instance
 
