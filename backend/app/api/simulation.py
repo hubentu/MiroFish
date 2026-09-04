@@ -1501,6 +1501,35 @@ def generate_profiles():
 
 # ============== 模拟运行控制接口 ==============
 
+@simulation_bp.route('/resume-world', methods=['POST'])
+def resume_world():
+    """恢复导入的模拟世界，仅用于实时采访。"""
+    try:
+        simulation_id = (request.get_json() or {}).get('simulation_id')
+        if not simulation_id:
+            return jsonify({
+                "success": False,
+                "error": "simulation_id required",
+            }), 400
+
+        state = SimulationRunner.resume_for_interview(simulation_id)
+        return jsonify({
+            "success": True,
+            "data": state.to_dict() if hasattr(state, "to_dict") else vars(state),
+        })
+    except ValueError as error:
+        return jsonify({
+            "success": False,
+            "error": str(error),
+        }), 400
+    except Exception as error:
+        logger.error(f"恢复采访环境失败: {error}")
+        return jsonify({
+            "success": False,
+            "error": str(error),
+        }), 500
+
+
 @simulation_bp.route('/start', methods=['POST'])
 def start_simulation():
     """

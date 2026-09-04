@@ -27,6 +27,7 @@ from ..utils.zep import (
 )
 from .zep_graph_memory_updater import ZepGraphMemoryManager
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
+from .report_transfer import detect_live_world_capability
 
 logger = get_logger('mirofish.simulation_runner')
 
@@ -374,7 +375,8 @@ class SimulationRunner:
         platform: str = "parallel",  # twitter / reddit / parallel
         max_rounds: int = None,  # 最大模拟轮数（可选，用于截断过长的模拟）
         enable_graph_memory_update: bool = False,  # 是否将活动更新到Zep图谱
-        graph_id: str = None  # Zep图谱ID（启用图谱更新时必需）
+        graph_id: str = None,  # Zep图谱ID（启用图谱更新时必需）
+        interview_only: bool = False,
     ) -> SimulationRunState:
         """
         启动模拟
@@ -464,10 +466,16 @@ class SimulationRunner:
         
         # 确定运行哪个脚本（脚本位于 backend/scripts/ 目录）
         if platform == "twitter":
-            script_name = "run_twitter_simulation.py"
+            script_name = (
+                "run_parallel_simulation.py"
+                if interview_only else "run_twitter_simulation.py"
+            )
             state.twitter_running = True
         elif platform == "reddit":
-            script_name = "run_reddit_simulation.py"
+            script_name = (
+                "run_parallel_simulation.py"
+                if interview_only else "run_reddit_simulation.py"
+            )
             state.reddit_running = True
         else:
             script_name = "run_parallel_simulation.py"
@@ -523,6 +531,12 @@ class SimulationRunner:
             # 如果指定了最大轮数，添加到命令行参数
             if max_rounds is not None and max_rounds > 0:
                 cmd.extend(["--max-rounds", str(max_rounds)])
+            if interview_only:
+                cmd.append("--interview-only")
+                if platform == "twitter":
+                    cmd.append("--twitter-only")
+                elif platform == "reddit":
+                    cmd.append("--reddit-only")
             
             # 创建主日志文件，避免 stdout/stderr 管道缓冲区满导致进程阻塞
             main_log_path = os.path.join(sim_dir, "simulation.log")
@@ -615,6 +629,42 @@ class SimulationRunner:
             raise
         
         return state
+
+    @classmethod
+    def resume_for_interview(cls, simulation_id: str) -> SimulationRunState:
+        """Start an imported world in IPC interview mode without new rounds."""
+        from pathlib import Path
+
+        sim_dir = Path(cls.RUN_STATE_DIR) / simulation_id
+        if not detect_live_world_capability(sim_dir):
+            raise ValueError(
+                "模拟配置、Profile 或数据库不存在，无法恢复采访环境"
+            )
+
+        # interview-only assumes export populated the platform DBs; OASIS opens
+        # those files in place and the runner must never recreate them.
+        reddit = (
+            (sim_dir / "reddit_profiles.json").is_file()
+            and (sim_dir / "reddit_simulation.db").is_file()
+        )
+        twitter = (
+            (sim_dir / "twitter_profiles.csv").is_file()
+            and (sim_dir / "twitter_simulation.db").is_file()
+        )
+        platform = "parallel" if reddit and twitter else (
+            "reddit" if reddit else "twitter"
+        )
+
+        process = cls._processes.get(simulation_id)
+        if process is not None and process.poll() is None:
+            raise ValueError(f"模拟环境已在运行: {simulation_id}")
+
+        return cls.start_simulation(
+            simulation_id=simulation_id,
+            platform=platform,
+            enable_graph_memory_update=False,
+            interview_only=True,
+        )
     
     @classmethod
     def _monitor_simulation(cls, simulation_id: str, locale: str = 'zh'):

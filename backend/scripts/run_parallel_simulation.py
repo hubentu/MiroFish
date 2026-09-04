@@ -1103,7 +1103,8 @@ async def run_twitter_simulation(
     simulation_dir: str,
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
-    max_rounds: Optional[int] = None
+    max_rounds: Optional[int] = None,
+    interview_only: bool = False,
 ) -> PlatformSimulation:
     """运行Twitter模拟
     
@@ -1149,7 +1150,10 @@ async def run_twitter_simulation(
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
     
     db_path = os.path.join(simulation_dir, "twitter_simulation.db")
-    if os.path.exists(db_path):
+    if interview_only and not os.path.exists(db_path):
+        log_info(f"错误: 已有数据库不存在: {db_path}")
+        return result
+    if not interview_only and os.path.exists(db_path):
         os.remove(db_path)
     
     result.env = oasis.make(
@@ -1161,6 +1165,10 @@ async def run_twitter_simulation(
     
     await result.env.reset()
     log_info("环境已启动")
+
+    if interview_only:
+        log_info("采访模式：已载入现有数据库，跳过模拟轮次")
+        return result
     
     if action_logger:
         action_logger.log_simulation_start(config)
@@ -1295,7 +1303,8 @@ async def run_reddit_simulation(
     simulation_dir: str,
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
-    max_rounds: Optional[int] = None
+    max_rounds: Optional[int] = None,
+    interview_only: bool = False,
 ) -> PlatformSimulation:
     """运行Reddit模拟
     
@@ -1340,7 +1349,10 @@ async def run_reddit_simulation(
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
     
     db_path = os.path.join(simulation_dir, "reddit_simulation.db")
-    if os.path.exists(db_path):
+    if interview_only and not os.path.exists(db_path):
+        log_info(f"错误: 已有数据库不存在: {db_path}")
+        return result
+    if not interview_only and os.path.exists(db_path):
         os.remove(db_path)
     
     result.env = oasis.make(
@@ -1352,6 +1364,10 @@ async def run_reddit_simulation(
     
     await result.env.reset()
     log_info("环境已启动")
+
+    if interview_only:
+        log_info("采访模式：已载入现有数据库，跳过模拟轮次")
+        return result
     
     if action_logger:
         action_logger.log_simulation_start(config)
@@ -1519,6 +1535,12 @@ async def main():
         default=False,
         help='模拟完成后立即关闭环境，不进入等待命令模式'
     )
+    parser.add_argument(
+        '--interview-only',
+        action='store_true',
+        default=False,
+        help='从已有数据库启动环境，跳过模拟轮次并等待采访命令'
+    )
     
     args = parser.parse_args()
     
@@ -1577,14 +1599,26 @@ async def main():
     reddit_result: Optional[PlatformSimulation] = None
     
     if args.twitter_only:
-        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds)
+        twitter_result = await run_twitter_simulation(
+            config, simulation_dir, twitter_logger, log_manager,
+            args.max_rounds, args.interview_only
+        )
     elif args.reddit_only:
-        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds)
+        reddit_result = await run_reddit_simulation(
+            config, simulation_dir, reddit_logger, log_manager,
+            args.max_rounds, args.interview_only
+        )
     else:
         # 并行运行（每个平台使用独立的日志记录器）
         results = await asyncio.gather(
-            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds),
-            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds),
+            run_twitter_simulation(
+                config, simulation_dir, twitter_logger, log_manager,
+                args.max_rounds, args.interview_only
+            ),
+            run_reddit_simulation(
+                config, simulation_dir, reddit_logger, log_manager,
+                args.max_rounds, args.interview_only
+            ),
         )
         twitter_result, reddit_result = results
     
