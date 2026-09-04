@@ -81,6 +81,35 @@ def test_round_trip_requires_graph(tmp_path: Path):
     assert result["manifest"]["capabilities"]["live_world"] is True
 
 
+def test_reject_empty_graph_nodes(tmp_path: Path):
+    zpath = tmp_path / "bad.zip"
+    import zipfile
+
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"format_version": FORMAT_VERSION}))
+        zf.writestr("report/full_report.md", "# x")
+        zf.writestr("report/meta.json", "{}")
+        zf.writestr("graph/graph.json", json.dumps({"nodes": [], "edges": []}))
+    with pytest.raises(ValueError, match="nodes"):
+        unpack_and_validate(zpath, tmp_path / "w")
+
+
+def test_reject_unsupported_format_version(tmp_path: Path):
+    zpath = tmp_path / "bad.zip"
+    import zipfile
+
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"format_version": 999}))
+        zf.writestr("report/full_report.md", "# x")
+        zf.writestr("report/meta.json", "{}")
+        zf.writestr(
+            "graph/graph.json",
+            json.dumps({"nodes": [{"uuid": "n1"}], "edges": []}),
+        )
+    with pytest.raises(ValueError, match="format_version"):
+        unpack_and_validate(zpath, tmp_path / "w")
+
+
 def test_reject_missing_graph(tmp_path: Path):
     zpath = tmp_path / "bad.zip"
     import zipfile

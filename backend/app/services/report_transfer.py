@@ -138,6 +138,18 @@ def pack_transfer_zip(
     return dest_zip
 
 
+def _safe_extract(zf: zipfile.ZipFile, dest_dir: Path) -> None:
+    dest_root = dest_dir.resolve()
+    for info in zf.infolist():
+        member = Path(info.filename)
+        if member.is_absolute() or ".." in member.parts:
+            raise ValueError(f"unsafe zip member path: {info.filename}")
+        target = (dest_root / member).resolve()
+        if not target.is_relative_to(dest_root):
+            raise ValueError(f"unsafe zip member path: {info.filename}")
+        zf.extract(info, dest_root)
+
+
 def _validate_graph(work_dir: Path) -> None:
     graph_path = work_dir / "graph" / "graph.json"
     if not graph_path.is_file():
@@ -155,7 +167,7 @@ def _validate_graph(work_dir: Path) -> None:
 def unpack_and_validate(zip_path: Path, work_dir: Path) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(work_dir)
+        _safe_extract(zf, work_dir)
 
     manifest_path = work_dir / "manifest.json"
     if not manifest_path.is_file():
