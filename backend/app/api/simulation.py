@@ -2536,7 +2536,7 @@ def interview_agents_batch():
             ],
             "platform": "reddit",              // 可选，默认平台（被每项的platform覆盖）
                                                // 不指定时：双平台模拟每个Agent同时采访两个平台
-            "timeout": 120                     // 可选，超时时间（秒），默认120
+            "timeout": 300                     // 可选，超时时间（秒），默认300
         }
 
     返回：
@@ -2563,7 +2563,7 @@ def interview_agents_batch():
         simulation_id = data.get('simulation_id')
         interviews = data.get('interviews')
         platform = data.get('platform')  # 可选：twitter/reddit/None
-        timeout = data.get('timeout', 120)
+        timeout = data.get('timeout', 300)
 
         if not simulation_id:
             return jsonify({
